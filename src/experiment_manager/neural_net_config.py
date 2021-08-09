@@ -102,7 +102,7 @@ class NeuralNetConfig(DottableConfigParser):
         if 'Parallelism' not in self.sections():
             self.add_section('Parallelism')
 
-        # Create coinvenience properties
+        # Create convenience properties
         # (getters and setters) for known
         # nn parameters (listed in NEURAL_NET_ATTRS:
         
