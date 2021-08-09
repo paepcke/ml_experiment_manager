@@ -104,24 +104,11 @@ TODO:
             # Must be a dict:
             if not type(initial_info) == dict:
                 raise TypeError(f"Arg initial_info must be a dict, not {initial_info}")
-            init_info_keys = list(initial_info.keys())
-            # If we have csv_writer_names, initialize
-            # the self.csv_writers dict to have those
-            # names as keys, though values will still be
-            # None:
-            try:
-                for csv_writer_fname in initial_info['csv_writer_names']:
-                    self.csv_writers[csv_writer_fname] = None
-            except KeyError:
-                # No csv_writer_names; that's ok:
-                pass
-            
+
             # Add passed-in info to what we know:
             self.update(initial_info)
-        else:
-            init_info_keys = []
 
-        if 'class_names' not in init_info_keys:
+        if 'class_names' not in list(self.keys()):
             self['class_names'] = None
 
         self.models_path       = os.path.join(self.root, 'models')
@@ -148,6 +135,10 @@ TODO:
         self['_csv_files_path']         = self.csv_files_path
         self['_tensorboard_files_path'] = self.tensorboard_path
         self['_hparams_path']           = self.hparams_path
+        
+        # Create DictWriters for any already
+        # existing csv files:
+        self._open_csv_writers()
 
         return self
 
@@ -166,31 +157,6 @@ TODO:
         self._save_self()
 
     # --------------- Public Methods --------------------
-
-    #------------------------------------
-    # add_hparams
-    #-------------------
-    
-    def add_hparams(self, config_fname):
-        '''
-        Read the given config file, creating a
-        NeuralNetConfig instance. Store that in
-        the 'config' key. Also, write a json copy to 
-        the hparams subdir. 
-        
-        :param config_fname: path to config file that is
-            readable by the standard ConfigParser facility
-        :type config_fname: src
-        :return a NeuralNetConfig instance 
-        :rtype NeuralNetConfig
-        '''
-        
-        config = self._initialize_config_struct(config_fname)
-        self['config'] = config
-        # Save a json representation in the hparams subdir:
-        config_path = os.path.join(self.hparams_path, 'config.json')
-        config.to_json(config_path, check_file_exists=False)
-        return config 
 
     #------------------------------------
     # save 
@@ -254,7 +220,8 @@ TODO:
         :param index_col: for dataframes only: col name for
             the index; if None, index is ignored
         :type index_col: {None | str}
-        :return: path to file
+        :return: path to file where given data are stored 
+            for persistence
         :rtype: str
         '''
         
@@ -283,6 +250,10 @@ TODO:
 
         elif type(item) in (dict, list, pd.Series, pd.DataFrame, np.ndarray):
             dst = self._save_records(item, fname, index_col)
+            
+        elif isinstance(item, NeuralNetConfig):
+            self.add_hparams(item, fname)
+            dst = os.path.join(self.hparams_path, f"{fname}.json")
 
         elif type(item) == plt.Figure:
             fig = item
@@ -296,6 +267,49 @@ TODO:
 
         self.save()
         return dst
+
+    #------------------------------------
+    # add_hparams
+    #-------------------
+    
+    def add_hparams(self, config_fname_or_obj, key):
+        '''
+        If config_fname_or_obj is a string, it is assumed
+        to be a configuration file readable by NeuralNetConfig
+        (or the built-in configparser). In that case, 
+        read the given file, creating a NeuralNetConfig instance. 
+        Store that in self[key]. Also, write a json copy to 
+        the hparams subdir, with key as the file name.
+        
+        If config_fname_or_obj is already a NeuralNetConfig instance,
+        write a json copy to the hparams subdir, with key as the file name,
+        and store the instance in self[key].
+        
+        May be called by client, but is also called by save()
+        when client calls save() with a config instance.
+        
+        :param config_fname_or_obj: path to config file that is
+            readable by the standard ConfigParser facility. Or
+            an already finished NeuralNetConfig instance
+        :type config_fname_or_obj: {src | NeuralNetConfig}
+        :param key: key under which the config is to be
+            available
+        :type key: str
+        :return a NeuralNetConfig instance 
+        :rtype NeuralNetConfig
+        '''
+
+        if type(config_fname_or_obj) == str:
+            # Was given the path to a configuration file:
+            config = self._initialize_config_struct(config_fname_or_obj)
+        else:
+            config = config_fname_or_obj
+            
+        self[key] = config
+        # Save a json representation in the hparams subdir:
+        config_path = os.path.join(self.hparams_path, f"{key}.json")
+        config.to_json(config_path, check_file_exists=False)
+        return config 
 
     #------------------------------------
     # load 
@@ -328,41 +342,23 @@ TODO:
         exp_inst.tensorboard_files_path = exp_inst['_tensorboard_files_path']
         exp_inst.hparams_path      = exp_inst['_hparams_path']
         
-        # If key 'config' contains a JSON representation
-        # of a NeuralNetConfig, reconstitute it:
-        try:
-            config_info = exp_inst['config']
-            # Little sanity check:
-            if config_info.startswith('{'):
-                # Hopefully it's json:
-                exp_inst['config'] = NeuralNetConfig.from_json(config_info)
-        except:
-            # No config info (i.e. add_hparams() not used)
-            pass
+        # If the hparams path contains json files of
+        # saved configs, turn them into NeuralNetConfig instances,
+        # and assign those to self[<keys>] with one key
+        # for each hparam json file (usually that will just
+        # be one):
+        
+        for file in os.listdir(exp_inst.hparams_path):
+            path = os.path.join(exp_inst.hparams_path, file)
+            with open(path, 'r') as fd:
+                config_json_str = fd.read()
+            config = NeuralNetConfig.from_json(config_json_str)
+            key = Path(path).stem
+            exp_inst[key] = config
 
         # Open CSV writers if needed.
-        # First, get dict CSV writer names that will
-        # be the keys of the self.csv_writers dict: 
-        csv_writer_names = exp_inst['csv_writer_names']
-        for writer_name in csv_writer_names:
-            file_path = os.path.join(exp_inst.root,
-                                     exp_inst.csv_files_path,
-                                     writer_name + '.csv'
-                                     )
-            # Get the field names (i.e. header row):
-            with open(file_path, 'r') as fd:
-                col_names = csv.DictReader(fd).fieldnames
-            
-            fd = open(file_path, 'a')
-            csv_writer = csv.DictWriter(fd, col_names)
-            # For flush() and close() later on:
-            csv_writer.fd = fd
-            exp_inst.csv_writers[writer_name] = csv_writer
-        
-        # Get rid of the helper info that was added by
-        # the save() method:
-        del exp_inst['csv_writer_names']
-            
+        self._open_csv_writers(instance= exp_inst)
+
         return exp_inst
 
     #------------------------------------
@@ -511,6 +507,41 @@ TODO:
 
 
     # --------------- Private Methods --------------------
+
+    #------------------------------------
+    # _open_csv_writers
+    #-------------------
+    
+    def _open_csv_writers(self, instance=None):
+        '''
+        Finds csv files in the csv subdirectory,
+        opens a DictWriter for each, and adds the
+        writer under the file name key.
+        
+        :param instance: if provided, the initialization
+            of key/val pairs will occur on that instance,
+            instead of self. Used only when called from
+            __new__()
+        :type instance: ExperimentManager
+        '''
+        
+        if instance is not None:
+            self = instance
+        for file in os.listdir(self.csv_files_path):
+            path = os.path.join(self.csv_files_path, file)
+            # Sanity check:
+            if Path(path).suffix == '.csv':
+                # Get the field names (i.e. header row):
+                with open(path, 'r') as fd:
+                    col_names = csv.DictReader(fd).fieldnames
+            
+                # Make the writer:
+                with open(path, 'a') as fd:
+                    writer = csv.DictWriter(fd, col_names)
+                    writer.fd = fd
+                    key = Path(path).stem
+                    self[key] = writer.fd.name
+                    self.csv_writers[key] = writer 
 
     #------------------------------------
     # _schedule_save 
@@ -899,13 +930,6 @@ TODO:
         #except KeyError:
         #    raise ValueError("Cannot save experiment without class_names having been set first")
 
-        # CSV writers are keyed from file names
-        # and map to open csv.DictWriter. Create a new 
-        # dict entry to hold the csv writer names for
-        # later recreation in load():
-        
-        self['csv_writer_names'] = list(self.csv_writers.keys())
-        
         # If config facility is being used, turn
         # the NeuralNetConfig instance to json:
         try:

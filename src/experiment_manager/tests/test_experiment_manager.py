@@ -4,28 +4,29 @@ Created on Aug 5, 2021
 @author: paepcke
 '''
 import csv
+import json
 import os
 from pathlib import Path
 import shutil
 import struct
+import tempfile
 import unittest
 import zlib
-import json
 
-import pandas as pd
-import numpy as np
 import torch
 
 from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread
+from experiment_manager.neural_net_config import NeuralNetConfig
+import numpy as np
+import pandas as pd
 
 
-TEST_ALL = True
-#TEST_ALL = False
+#**********TEST_ALL = True
+TEST_ALL = False
 
 '''
 TODO:
    o test moving the experiment: ensure relative addressing!
-   o deleting an item
 '''
 
 class ExperimentManagerTest(unittest.TestCase):
@@ -202,17 +203,29 @@ class ExperimentManagerTest(unittest.TestCase):
     # test_saving_hparams
     #-------------------
     
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    #******@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_saving_hparams(self):
         
         exp = ExperimentManager(self.exp_root)
 
-        exp.add_hparams(self.hparams_path)
-        config_obj = exp['config']
-        
+        exp.add_hparams(self.hparams_path, 'my_config')
+        config_obj = exp['my_config']
+                         
+        # Should have a json export of the config instance:
+        saved_copy_path = os.path.join(exp.hparams_path, 'my_config.json')
+        with open(saved_copy_path, 'r') as fd:
+            json_str = fd.read()
+            other_config_obj = NeuralNetConfig.from_json(json_str)
+            # Couple of spot checks that the config instance
+            # behaves as expected:
+            self.assertEqual(other_config_obj['Training']['net_name'], 'resnet18')
+            self.assertEqual(other_config_obj.getint('Parallelism', 'master_port'), 5678)
+
         # The config instance should be available
         # via the config key:
-        self.assertEqual(config_obj, exp['config'])
+        self.assertEqual(config_obj, exp['my_config'])
+        # Couple of spot checks that the config instance
+        # behaves as expected:
         self.assertEqual(config_obj['Training']['net_name'], 'resnet18')
         self.assertEqual(config_obj.getint('Parallelism', 'master_port'), 5678)
 
@@ -225,7 +238,7 @@ class ExperimentManagerTest(unittest.TestCase):
         # For cleanup in tearDown():
         self.exp = exp1
         
-        config_obj = exp1['config']
+        config_obj = exp1['my_config']
         self.assertEqual(config_obj['Training']['net_name'], 'resnet18')
         self.assertEqual(config_obj.getint('Parallelism', 'master_port'), 5678)
 
@@ -410,13 +423,52 @@ class ExperimentManagerTest(unittest.TestCase):
         exp.auto_save_thread.join()
         exp1.auto_save_thread.join()
         
-        print(f"Exp thread.is_alive: {exp.auto_save_thread.is_alive()}")
-        print(f"Exp1 thread.is_alive: {exp1.auto_save_thread.is_alive()}")
+        self.assertFalse(exp.auto_save_thread.is_alive())
+        self.assertFalse(exp1.auto_save_thread.is_alive())
         
         exp = ExperimentManager.load(self.exp_root)
         self.assertDictEqual(exp['my_dict'], animal_dict)
         
         exp.auto_save_thread.cancel()
+
+    #------------------------------------
+    # test_root_movability
+    #-------------------
+    
+    #******@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_root_movability(self):
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+        exp['foo'] = 10
+        index_strs = ['row0', 'row1']
+        col_strs   = ['foo', 'bar', 'fum']
+        tst_df = pd.DataFrame([[1,2,3], [4,5,6]], columns=col_strs, index=index_strs)
+        exp.save(tst_df, 'my_df')
+        config = NeuralNetConfig(self.hparams_path)
+        exp.save(config, 'my_config')
+
+        exp.close()
+        del exp
+        
+        with tempfile.TemporaryDirectory(dir='/tmp', prefix='exp_man_tests') as tmp_dir_name:
+            shutil.move(self.exp_root, tmp_dir_name)
+            new_root = os.path.join(tmp_dir_name, Path(self.exp_root).stem)
+            exp1 = ExperimentManager(new_root)
+            
+            self.assertEqual(exp1['foo'], 10)
+            
+            df_path = exp1.abspath('my_df', 'csv')
+            recovered_df = pd.read_csv(df_path)
+            print(recovered_df)
+            
+            recovered_config = exp1['my_config']
+            self.assertDictEqual(recovered_config, config)
+
+            exp1.close()
+            shutil.move(new_root, Path(self.exp_root).parent)
+                        
+        print('foo')
 
     #------------------------------------
     # test_abspath
