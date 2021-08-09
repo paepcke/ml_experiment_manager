@@ -72,20 +72,29 @@ TODO:
         o pr_curve_img_path
     
     '''
-    
+
     #------------------------------------
-    # __new__
+    # Constructor 
     #-------------------
-    
-    def __new__(cls, root_path, initial_info=None):
+
+    def __init__(self, root_path, initial_info=None):
         '''
+        If the given directory already contains an experiment.json
+        file, the resulting instance will be contain all
+        the information of the already existing experiment.
+        Else a new experiment is created.
         
+        The initial_info is an optional dict that will be
+        used to set desired initial key-value pairs in the
+        old or new instance.
+        
+        :param root_path: path to root directory of the
+            experiment to be created or loaded
+        :type root_path: str
         :param initial_info: optionally, a dict with already
             known facts about the experiment.
-        :type initial_info:
+        :type initial_info: {str : any}
         '''
-
-        self = super().__new__(cls)
 
         if not os.path.exists(root_path):
             os.makedirs(root_path)
@@ -150,20 +159,6 @@ TODO:
         
         # Create hparams configurations that might be available:
         self._open_config_files()
-
-        return self
-
-    #------------------------------------
-    # Constructor 
-    #-------------------
-
-    def __init__(self, _root_path):
-        '''
-        The __new__() method did most of the work.
-        Now, if this is a real new instance, as opposed
-        to one that is reconstituted via load(), save
-        the experiment for the first time.
-        '''
 
         self._save_self()
 
