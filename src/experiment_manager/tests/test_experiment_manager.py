@@ -381,7 +381,11 @@ class ExperimentManagerTest(unittest.TestCase):
         
         # Get a second experiment manager pointing 
         # to the same experiment dir tree (not a usual
-        # situation, but could happen):
+        # situation, but could happen).
+        # Make sure exp is not in the middle of saving.
+        # Not something regular user needs to do. Necessary
+        # here b/c we are loading a second experiment to
+        # the *same* experiment that is already active:
         exp.auto_save_thread.join()
         exp1 = ExperimentManager.load(self.exp_root)
         

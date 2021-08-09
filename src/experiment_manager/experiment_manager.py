@@ -231,7 +231,7 @@ TODO:
                  if fname exists, the name is extended
                  with '_<n>' until it is unique among this
                  experiment's already saved models. Uses
-                 pytorch.save
+                 torch.save
             o Dictionaries and array-likes:
                  If a csv DictWriter for the given fname
                  exists. 
@@ -433,6 +433,17 @@ TODO:
         # Delete the key/val pair:
         super().__delitem__(key)
         self._schedule_save()
+
+    #------------------------------------
+    # tensorboard_path
+    #-------------------
+    
+    def tensorboard_path(self):
+        '''
+        Returns path to directory where tensorboard
+        files may be held for this experiment.
+        '''
+        return self.tensorboard_path
 
     #------------------------------------
     # abspath
