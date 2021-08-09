@@ -46,8 +46,8 @@ TODO:
     location of csv files created during training and inference.
     
     An experiment instance is saved and loaded via
-        o <exp-instance>.save(fp), and 
-        o ExperimentManager.load(fp)
+        o <exp-instance>.save(), and 
+        o ExperimentManager(path)
         
     Storage format is json
     
@@ -107,6 +107,14 @@ TODO:
 
             # Add passed-in info to what we know:
             self.update(initial_info)
+            
+        # Check whether the given root already contains an
+        # 'experiment.json' file:
+        experiment_json_path = os.path.join(root_path, 'experiment.json')
+        if os.path.exists(experiment_json_path):
+            with open(experiment_json_path, 'r') as fd:
+                restored_dict_contents = json.load(fd)
+                self.update(restored_dict_contents)
 
         if 'class_names' not in list(self.keys()):
             self['class_names'] = None
@@ -139,6 +147,9 @@ TODO:
         # Create DictWriters for any already
         # existing csv files:
         self._open_csv_writers()
+        
+        # Create hparams configurations that might be available:
+        self._open_config_files()
 
         return self
 
@@ -312,85 +323,6 @@ TODO:
         return config 
 
     #------------------------------------
-    # load 
-    #-------------------
-    
-    @classmethod
-    def load(cls, path):
-        '''
-        Create an ExperimentManager instance from a previously
-        saved JSON export.
-        
-        :param path: path to ExperimentManager json export
-        :type path: str
-        '''
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"ExperimentManager {path} does not exist.")
-        if not os.path.isdir(path):
-            raise ValueError(f"ExperimentManager path must be to a directory, not {path}")
-        
-        full_path = os.path.join(path, 'experiment.json')
-        with open(full_path, 'r') as fd:
-            restored_dict_contents = json.load(fd)
-        
-        exp_inst = ExperimentManager.__new__(ExperimentManager, path, restored_dict_contents) 
-            
-        exp_inst.root              = exp_inst['root_path']
-        exp_inst.models_path       = exp_inst['_models_path'] 
-        exp_inst.figs_path         = exp_inst['_figs_path'] 
-        exp_inst.csv_files_path    = exp_inst['_csv_files_path']
-        exp_inst.tensorboard_files_path = exp_inst['_tensorboard_files_path']
-        exp_inst.hparams_path      = exp_inst['_hparams_path']
-        
-        # If the hparams path contains json files of
-        # saved configs, turn them into NeuralNetConfig instances,
-        # and assign those to self[<keys>] with one key
-        # for each hparam json file (usually that will just
-        # be one):
-        
-        for file in os.listdir(exp_inst.hparams_path):
-            path = os.path.join(exp_inst.hparams_path, file)
-            with open(path, 'r') as fd:
-                config_json_str = fd.read()
-            config = NeuralNetConfig.from_json(config_json_str)
-            key = Path(path).stem
-            exp_inst[key] = config
-
-        # Open CSV writers if needed.
-        self._open_csv_writers(instance= exp_inst)
-
-        return exp_inst
-
-    #------------------------------------
-    # refresh 
-    #-------------------
-    
-    #def refresh(self):
-    #    '''
-    # Re-reads the current json reflection of
-    # its state. Only need for playing tricks
-    # like another experiment instance operating
-    # under the same root, and making changes.
-    # '''
-    # self.load(self.root)
-
-    #------------------------------------
-    # __setitem__
-    #-------------------
-    
-    def __setitem__(self, key, item):
-        '''
-        Save to json every time the dict is changed.
-        
-        :param key: key to set
-        :type key: str
-        :param item: value to map to
-        :type item: any
-        '''
-        super().__setitem__(key, item)
-        self._schedule_save()
-
-    #------------------------------------
     # update
     #-------------------
     
@@ -400,35 +332,6 @@ TODO:
         '''
         super().update(*args, **kwargs)
         self.save()
-
-    #------------------------------------
-    # __delitem__
-    #-------------------
-    
-    def __delitem__(self, key):
-        
-        # Allow KeyError to bubble up to client,
-        # if the key doesn't exist:
-        item = self[key]
-        
-        # If a DictWriter, close it, and delete the file:
-        if type(item) == csv.DictWriter:
-            path = item.fd.name
-            # Only delete file if it's under the
-            # exeriment root. Else it could be a
-            # DictWriter saved under a top level
-            # user key, and owned by them:
-            if self._is_experiment_file(path):
-                item.fd.close()
-                os.remove(path)
-        elif self._is_experiment_file(item):
-            # If this is a file in the experiment
-            # tree, delete it:
-            os.remove(item)
-
-        # Delete the key/val pair:
-        super().__delitem__(key)
-        self._schedule_save()
 
     #------------------------------------
     # tensorboard_path
@@ -507,6 +410,42 @@ TODO:
 
 
     # --------------- Private Methods --------------------
+    
+    #------------------------------------
+    # _open_config_files 
+    #-------------------
+    
+    def _open_config_files(self, instance=None):
+        '''
+        Finds files in the hparams subdirectory. Any
+        files there are assumed to be json files from
+        previously saved NeuralNetConfig instances.
+        
+        Recreates those instances, and sets value of
+        the corresponding keys to those instances. Keys
+        are the file names without extension.
+          
+        :param instance: if provided, the instance whose keys
+            are to be set instead of self.
+        :type instance: ExperimentManager
+        '''
+        
+        # If the hparams path contains json files of
+        # saved configs, turn them into NeuralNetConfig instances,
+        # and assign those to self[<keys>] with one key
+        # for each hparam json file (usually that will just
+        # be one):
+        
+        if instance is not None:
+            self = instance
+        
+        for file in os.listdir(self.hparams_path):
+            path = os.path.join(self.hparams_path, file)
+            with open(path, 'r') as fd:
+                config_json_str = fd.read()
+            config = NeuralNetConfig.from_json(config_json_str)
+            key = Path(path).stem
+            self[key] = config
 
     #------------------------------------
     # _open_csv_writers
@@ -1070,6 +1009,51 @@ TODO:
             except:
                 # Couldn't open, so doesn't exist:
                 return new_path
+
+    #------------------------------------
+    # __setitem__
+    #-------------------
+    
+    def __setitem__(self, key, item):
+        '''
+        Save to json every time the dict is changed.
+        
+        :param key: key to set
+        :type key: str
+        :param item: value to map to
+        :type item: any
+        '''
+        super().__setitem__(key, item)
+        self._schedule_save()
+
+    #------------------------------------
+    # __delitem__
+    #-------------------
+    
+    def __delitem__(self, key):
+        
+        # Allow KeyError to bubble up to client,
+        # if the key doesn't exist:
+        item = self[key]
+        
+        # If a DictWriter, close it, and delete the file:
+        if type(item) == csv.DictWriter:
+            path = item.fd.name
+            # Only delete file if it's under the
+            # exeriment root. Else it could be a
+            # DictWriter saved under a top level
+            # user key, and owned by them:
+            if self._is_experiment_file(path):
+                item.fd.close()
+                os.remove(path)
+        elif self._is_experiment_file(item):
+            # If this is a file in the experiment
+            # tree, delete it:
+            os.remove(item)
+
+        # Delete the key/val pair:
+        super().__delitem__(key)
+        self._schedule_save()
 
 
 # ------------------- Class AutoSaveThread -----------------

@@ -21,8 +21,8 @@ import numpy as np
 import pandas as pd
 
 
-#**********TEST_ALL = True
-TEST_ALL = False
+TEST_ALL = True
+#TEST_ALL = False
 
 '''
 TODO:
@@ -106,7 +106,7 @@ class ExperimentManagerTest(unittest.TestCase):
         exp.close()
         del exp
         
-        exp1 = ExperimentManager.load(self.exp_root)
+        exp1 = ExperimentManager(self.exp_root)
         # For cleanup in tearDown():
         self.exp = exp1
         self.assertEqual(exp1['root_path'], self.exp_root)
@@ -181,7 +181,7 @@ class ExperimentManagerTest(unittest.TestCase):
         del exp
         
         # Reconstitute the same experiment:
-        exp = ExperimentManager.load(self.exp_root)
+        exp = ExperimentManager(self.exp_root)
         # For cleanup in tearDown():
         self.exp = exp
         
@@ -234,7 +234,7 @@ class ExperimentManagerTest(unittest.TestCase):
         del exp
         
         # Reconstitute the same experiment:
-        exp1 = ExperimentManager.load(self.exp_root)
+        exp1 = ExperimentManager(self.exp_root)
         # For cleanup in tearDown():
         self.exp = exp1
         
@@ -287,7 +287,7 @@ class ExperimentManagerTest(unittest.TestCase):
         del exp
         
         # Reconstitute the same experiment:
-        exp1 = ExperimentManager.load(self.exp_root)
+        exp1 = ExperimentManager(self.exp_root)
         # For cleanup in tearDown():
         self.exp = exp1
         
@@ -400,7 +400,7 @@ class ExperimentManagerTest(unittest.TestCase):
         # here b/c we are loading a second experiment to
         # the *same* experiment that is already active:
         exp.auto_save_thread.join()
-        exp1 = ExperimentManager.load(self.exp_root)
+        exp1 = ExperimentManager(self.exp_root)
         
         # The exp should still have my_dict in memory:
         self.assertDictEqual(exp['my_dict'], my_dict)
@@ -426,7 +426,7 @@ class ExperimentManagerTest(unittest.TestCase):
         self.assertFalse(exp.auto_save_thread.is_alive())
         self.assertFalse(exp1.auto_save_thread.is_alive())
         
-        exp = ExperimentManager.load(self.exp_root)
+        exp = ExperimentManager(self.exp_root)
         self.assertDictEqual(exp['my_dict'], animal_dict)
         
         exp.auto_save_thread.cancel()
@@ -435,7 +435,7 @@ class ExperimentManagerTest(unittest.TestCase):
     # test_root_movability
     #-------------------
     
-    #******@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_root_movability(self):
         exp = ExperimentManager(self.exp_root)
         # For cleanup in tearDown():
@@ -460,15 +460,13 @@ class ExperimentManagerTest(unittest.TestCase):
             
             df_path = exp1.abspath('my_df', 'csv')
             recovered_df = pd.read_csv(df_path)
-            print(recovered_df)
+            #print(recovered_df)
             
             recovered_config = exp1['my_config']
             self.assertDictEqual(recovered_config, config)
 
             exp1.close()
             shutil.move(new_root, Path(self.exp_root).parent)
-                        
-        print('foo')
 
     #------------------------------------
     # test_abspath
