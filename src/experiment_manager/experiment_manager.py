@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import shutil
 import threading
+from enum import Enum
 
 import torch
 
@@ -32,6 +33,12 @@ import pandas as pd
 import torch.nn as nn
 import numpy as np
 
+class Datatype(Enum):
+    tabular 	= '.csv'
+    model   	= '.pth'
+    figure  	= '.pdf'
+    hparams     = '.json'
+    tensorboard = 'tensorboard'
 
 class ExperimentManager(dict):
     '''
@@ -168,7 +175,7 @@ TODO:
     # save 
     #-------------------
     
-    def save(self, item=None, fname=None, index_col=None):
+    def save(self, item=None, key=None, index_col=None):
         '''
         Save any of:
             o pytorch model
@@ -177,6 +184,8 @@ TODO:
             o pd.Series
             o pd.DataFrame
             o figures
+            o NeuralNetConfig instances
+            o strings are assumed to be tensorboards
 
             o this experiment itself
             
@@ -184,10 +193,10 @@ TODO:
         Though it is automatically saved anyway whenever 
         a change is made, and when close() is called.
         
-        The fname is the file name with or without .csv extension.
+        The key is the file name with or without .csv extension.
         The file will exist in the self.csv_files_path under the experiment
-        root no matter what path is provided by fname. Any parent of 
-        fname is discarded. The intended form of fname is just like:
+        root no matter what path is provided by key. Any parent of 
+        key is discarded. The intended form of key is just like:
         
             logits
             prediction_numbers
@@ -200,12 +209,12 @@ TODO:
         
         Saving behaviors:
             o Models: 
-                 if fname exists, the name is extended
+                 if key exists, the name is extended
                  with '_<n>' until it is unique among this
                  experiment's already saved models. Uses
                  torch.save
             o Dictionaries and array-likes:
-                 If a csv DictWriter for the given fname
+                 If a csv DictWriter for the given key
                  exists. 
                  
                  If no DictWriter exists, one is created with
@@ -213,16 +222,16 @@ TODO:
                  pd.DataFrame.columns, or for simple lists, range(len())
                  
             o Figures:
-                 if fname exists, the name is extended
+                 if key exists, the name is extended
                  with '_<n>' until it is unique among this
                  experiment's already saved figures. Uses
                  plt.savefig with file format taken from extension.
-                 If no extension provided in fname, default is PDF 
+                 If no extension provided in key, default is PDF 
 
         :param item: the data to save
         :type item: {dict | list | pd.Series | pd.DataFrame | torch.nn.Module | plt.Figure}
-        :param fname: key for retrieving the file path and DictWriter
-        :type fname: str
+        :param key: key for retrieving the file path and DictWriter
+        :type key: str
         :param index_col: for dataframes only: col name for
             the index; if None, index is ignored
         :type index_col: {None | str}
@@ -231,12 +240,15 @@ TODO:
         :rtype: str
         '''
         
-        if item is None:
+        if item is None and key is None:
+            # Save this experiment itself.
+            # Happens periodically after any
+            # changes; so client needs not worry
             self._save_self()
             return
 
-        # If item is given, fname must also be provided:
-        if fname is None:
+        # If item is given, key must also be provided:
+        if key is None:
             raise ValueError("Must provide file name (i.e. the item key).")
 
         # Fname is intended for use as the key to the 
@@ -244,33 +256,42 @@ TODO:
         # name inside of self.csv_files_path. So, clean
         # up what's given to us: remove parent dirs and
         # the extension:
-        fname = Path(fname).stem
+        key = Path(key).stem
         
         if type(item) == nn:
             model = item
             # A pytorch model
-            dst = os.path.join(self.models_path, fname)
+            dst = os.path.join(self.models_path, key)
             #if os.path.exists(dst):
-            #    dst = self._unique_fname(self.models_path, fname)
+            #    dst = self._unique_fname(self.models_path, key)
             torch.save(model.state_dict(), dst)
 
         elif type(item) in (dict, list, pd.Series, pd.DataFrame, np.ndarray):
-            dst = self._save_records(item, fname, index_col)
+            dst = self._save_records(item, key, index_col)
             
         elif isinstance(item, NeuralNetConfig):
-            self.add_hparams(item, fname)
-            dst = os.path.join(self.hparams_path, f"{fname}.json")
+            self.add_hparams(item, key)
+            dst = os.path.join(self.hparams_path, f"{key}.json")
 
         elif type(item) == plt.Figure:
             fig = item
-            fname_ext   = Path(fname).suffix
+            fname_ext   = Path(key).suffix
             # Remove the leading period if extension provided:
             file_format = 'pdf' if len(fname_ext) == 0 else fname_ext[1:] 
-            dst = os.path.join(self.figs_path, fname)
+            dst = os.path.join(self.figs_path, key)
             #if os.path.exists(dst):
-            #    dst = self._unique_fname(self.figs_path, fname)
+            #    dst = self._unique_fname(self.figs_path, key)
             plt.savefig(fig, dpi=150, format=file_format)
+            
+        elif type(item) == str:
+            # Create a new subdirectory of tensorboard:
+            dst = os.path.join(self.tensorboard_path, key)
+            os.makedirs(dst, exist_ok=True)
 
+        else:
+            raise TypeError(f"Don't know how to save item of type {type(item)}")
+        
+        # Update the saved state of this experiment instance
         self.save()
         return dst
 
@@ -318,17 +339,6 @@ TODO:
         return config 
 
     #------------------------------------
-    # update
-    #-------------------
-    
-    def update(self, *args, **kwargs):
-        '''
-        Save to json every time the dict is changed.
-        '''
-        super().update(*args, **kwargs)
-        self.save()
-
-    #------------------------------------
     # tensorboard_path
     #-------------------
     
@@ -340,32 +350,93 @@ TODO:
         return self.tensorboard_path
 
     #------------------------------------
+    # read
+    #-----
+    
+    def read(self, key, datatype):
+        '''
+        Given the key used in a previous save()
+        call, and the datatype (Datatype.tabular, 
+        Datatype.model, etc.): returns the current 
+        respective data in appropriate form. For
+        the Datatype enum being:
+        
+           tabular        Pandas DataFrame
+           model          torch.nn
+           figure         pyplot Figure
+           hparams        NeuralNetConfig
+           tensorboard    Path to tensorboard information
+        
+        :param key: name of the item to be retrieved
+        :type key: str
+        :param datatype: whether the key refers to 
+            a table (i.e. csv file), a figure (.pdf/.png, etc),
+            or one of the other Datatype enums
+        :type datatype: Datatype
+        :returns retrieved item
+        :rtype {any}
+        '''
+        
+        if type(datatype) != Datatype:
+            raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
+        
+        path = self.abspath(key, datatype)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Cannot find file/dir corresponding to {key} of type {datatype.name}")
+
+        if datatype == Datatype.tabular:
+            return pd.DataFrame.read_csv(path)
+        elif datatype == Datatype.model:
+            return torch.load(path)
+        elif datatype == Datatype.figure:
+            return plt.imread(path)
+        elif datatype == Datatype.hparams:
+            with open(path, 'r') as fd:
+                json_str = fd.read()
+                return NeuralNetConfig.from_json(json_str)
+        elif datatype == Datatype.tensorboard:
+            return path
+
+    #------------------------------------
     # abspath
     #-------------------
     
-    def abspath(self, fname, extension):
+    def abspath(self, key, datatype):
         '''
-        Given the fname used in a previous save()
-        call, and the file extension (.csv or .pth,
-        .pdf, etc.): returns the current full path to the
-        respective file.
+        Given the key used in a previous save()
+        call, and the datatype (Datatype.tabular, 
+        Datatype.model, etc.): returns the path
+        to the file where the item is stored.
         
-        :param fname: name of the item to be retrieved
-        :type fname: str
-        :param extension: file extension, like 'jpg', 'pdf', 
-            '.pth', 'csv', '.csv'
-        :type extension: str
+        :param key: name of the item whose filename
+            is to be retrieved
+        :type key: str
+        :param datatype: the Datatype of the item
+        :type extension: Datatype enum member
         :returns absolute path to corresponding file
         :rtype str
         '''
-        if not extension.startswith('.'):
-            extension = f".{extension}"
-        true_fname = Path(fname).stem + extension
-         
-        for root, _dirs, files in os.walk(self.root):
-            if true_fname in files:
-                return os.path.join(root, true_fname)
+        if type(datatype) != Datatype:
+            raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
+        
+        dt_extension = datatype.value
 
+        if datatype == Datatype.tabular:
+            path = os.path.join(self.csv_files_path, f"{key}{dt_extension}")
+        elif datatype == Datatype.model:
+            path = os.path.join(self.models_path, f"{key}{dt_extension}")
+        elif datatype == Datatype.figure:
+            # Figures may have different extensions: png, pdf, etc.:
+            path = None
+            for fig_file in os.listdir(self.figs_path):
+                if Path(fig_file).stem == key:
+                    path = os.path.join(self.figs_path, fig_file)
+        elif datatype == Datatype.hparams:
+            path = os.path.join(self.hparams_path, f"{key}{dt_extension}")
+        elif datatype == Datatype.tensorboard:
+            path = os.path.join(self.tensorboard_path, f"{key}{dt_extension}")
+
+        return path
 
     #------------------------------------
     # close 
@@ -410,19 +481,18 @@ TODO:
     # _open_config_files 
     #-------------------
     
-    def _open_config_files(self, instance=None):
+    def _open_config_files(self):
         '''
         Finds files in the hparams subdirectory. Any
-        files there are assumed to be json files from
-        previously saved NeuralNetConfig instances.
+        files there are assumed to be either json files from
+        previously saved NeuralNetConfig instances, or
+        configuration files.
         
-        Recreates those instances, and sets value of
+        (Re)creates NeuralNetConfig instances, and sets value of
         the corresponding keys to those instances. Keys
         are the file names without extension.
-          
-        :param instance: if provided, the instance whose keys
-            are to be set instead of self.
-        :type instance: ExperimentManager
+
+
         '''
         
         # If the hparams path contains json files of
@@ -431,14 +501,17 @@ TODO:
         # for each hparam json file (usually that will just
         # be one):
         
-        if instance is not None:
-            self = instance
-        
         for file in os.listdir(self.hparams_path):
             path = os.path.join(self.hparams_path, file)
-            with open(path, 'r') as fd:
-                config_json_str = fd.read()
-            config = NeuralNetConfig.from_json(config_json_str)
+            # Json file?
+            if Path(file).suffix == '.json':
+                with open(path, 'r') as fd:
+                    config_str = fd.read()
+                    config = NeuralNetConfig.from_json(config_str)
+            else:
+                # Assumed to be a config file as per Python's
+                # configparser syntax:
+                config = NeuralNetConfig(path)
             key = Path(path).stem
             self[key] = config
 
@@ -1020,6 +1093,18 @@ TODO:
         '''
         super().__setitem__(key, item)
         self._schedule_save()
+
+    #------------------------------------
+    # update
+    #-------------------
+    
+    def update(self, *args, **kwargs):
+        '''
+        Save to json every time the dict is changed.
+        '''
+        super().update(*args, **kwargs)
+        self.save()
+
 
     #------------------------------------
     # __delitem__

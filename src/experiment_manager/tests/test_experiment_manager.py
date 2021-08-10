@@ -15,14 +15,14 @@ import zlib
 
 import torch
 
-from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread
+from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread, Datatype
 from experiment_manager.neural_net_config import NeuralNetConfig
 import numpy as np
 import pandas as pd
 
 
-TEST_ALL = True
-#TEST_ALL = False
+#******TEST_ALL = True
+TEST_ALL = False
 
 '''
 TODO:
@@ -203,7 +203,7 @@ class ExperimentManagerTest(unittest.TestCase):
     # test_saving_hparams
     #-------------------
     
-    #******@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_saving_hparams(self):
         
         exp = ExperimentManager(self.exp_root)
@@ -459,7 +459,7 @@ class ExperimentManagerTest(unittest.TestCase):
             self.assertEqual(exp1['foo'], 10)
             
             df_path = exp1.abspath('my_df', 'csv')
-            recovered_df = pd.read_csv(df_path)
+            _recovered_df = pd.read_csv(df_path)
             #print(recovered_df)
             
             recovered_config = exp1['my_config']
@@ -472,16 +472,42 @@ class ExperimentManagerTest(unittest.TestCase):
     # test_abspath
     #-------------------
     
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    #********@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_abspath(self):
-        exp = ExperimentManager(self.exp_root)
+        
+        # Pre-made experiment tree with some csv files,
+        # a model, and a figure:
+        exp = ExperimentManager(self.prefab_exp_root)
         # For cleanup in tearDown():
         self.exp = exp
 
         tst_dict = {'foo' : 10, 'bar' : 20}
+        # Abspath result of a saved dict must match
+        # the path returned by the save process:
         csv_file_path = exp.save(tst_dict, 'first_dict')
+        self.assertEqual(exp.abspath('first_dict', Datatype.tabular), csv_file_path)
+        
+        # Previously saved csv file, just for fun:
+        self.assertEqual(exp.abspath('tiny_csv1', Datatype.tabular),
+                         os.path.join(exp.csv_files_path, 'tiny_csv1.csv'))
+        
+        # Data model:
+        self.assertEqual(exp.abspath('tiny_model', Datatype.model), 
+                         os.path.join(exp.models_path, 'tiny_model.pth'))
+        
+        # Figure:
+        self.assertEqual(exp.abspath('tiny_png', Datatype.figure), 
+                         os.path.join(exp.figs_path, 'tiny_png.png'))
 
-        self.assertEqual(exp.abspath('first_dict', 'csv'), csv_file_path)
+        # H-parameters
+        exp.add_hparams(self.hparams_path, 'my_hparams')
+        self.assertEqual(exp.abspath('my_hparams', Datatype.hparams), 
+                         os.path.join(exp.hparams_path, 'my_hparams.json'))
+
+        # Tensorboard    the-item (a dir name)   the-key
+        _dst = exp.save('my_tensorboard_dir', 'my_tensorboard')
+        self.assertEqual(exp.abspath('my_tensorboard', Datatype.tensorboard),
+                         os.path.join(exp.tensorboard_path, 'my_tensorboard_dir'))
 
     #------------------------------------
     # test_AutoSaveThread
@@ -554,9 +580,7 @@ class ExperimentManagerTest(unittest.TestCase):
             raise self.fail("Expected ValueError for unequal rows in list")
         except ValueError:
             pass
-        
-        
-        
+
 # -------------------- Utilities --------------
 
 
