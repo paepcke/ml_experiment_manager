@@ -175,7 +175,7 @@ TODO:
     # save 
     #-------------------
     
-    def save(self, item=None, key=None, index_col=None):
+    def save(self, key=None, item=None, index_col=None):
         '''
         Save any of:
             o pytorch model
@@ -228,10 +228,10 @@ TODO:
                  plt.savefig with file format taken from extension.
                  If no extension provided in key, default is PDF 
 
-        :param item: the data to save
-        :type item: {dict | list | pd.Series | pd.DataFrame | torch.nn.Module | plt.Figure}
         :param key: key for retrieving the file path and DictWriter
         :type key: str
+        :param item: the data to save
+        :type item: {dict | list | pd.Series | pd.DataFrame | torch.nn.Module | plt.Figure}
         :param index_col: for dataframes only: col name for
             the index; if None, index is ignored
         :type index_col: {None | str}
@@ -256,7 +256,10 @@ TODO:
         # name inside of self.csv_files_path. So, clean
         # up what's given to us: remove parent dirs and
         # the extension:
-        key = Path(key).stem
+        try:
+            key = Path(key).stem
+        except Exception as _e:
+            raise ValueError(f"First argument must be a data access key, not {key}")
         
         if type(item) == nn:
             model = item
@@ -283,7 +286,7 @@ TODO:
             #    dst = self._unique_fname(self.figs_path, key)
             plt.savefig(fig, dpi=150, format=file_format)
             
-        elif type(item) == str:
+        elif item is None and type(key) == str:
             # Create a new subdirectory of tensorboard:
             dst = os.path.join(self.tensorboard_path, key)
             os.makedirs(dst, exist_ok=True)
@@ -385,15 +388,19 @@ TODO:
             raise FileNotFoundError(f"Cannot find file/dir corresponding to {key} of type {datatype.name}")
 
         if datatype == Datatype.tabular:
-            return pd.DataFrame.read_csv(path)
+            return pd.read_csv(path)
         elif datatype == Datatype.model:
             return torch.load(path)
         elif datatype == Datatype.figure:
             return plt.imread(path)
         elif datatype == Datatype.hparams:
             with open(path, 'r') as fd:
-                json_str = fd.read()
-                return NeuralNetConfig.from_json(json_str)
+                if Path(path).suffix == '.json':
+                    json_str = fd.read()
+                    return NeuralNetConfig.from_json(json_str)
+                else:
+                    # Assume it's a cfg file, and hope  for the best:
+                    return NeuralNetConfig(path)
         elif datatype == Datatype.tensorboard:
             return path
 
@@ -432,9 +439,14 @@ TODO:
                 if Path(fig_file).stem == key:
                     path = os.path.join(self.figs_path, fig_file)
         elif datatype == Datatype.hparams:
-            path = os.path.join(self.hparams_path, f"{key}{dt_extension}")
+            # Allow for a json or a .cfg-type file:
+            path = None
+            for hparams_file in os.listdir(self.hparams_path):
+                if Path(hparams_file).stem == key:
+                    path = os.path.join(self.hparams_path, hparams_file)
+                
         elif datatype == Datatype.tensorboard:
-            path = os.path.join(self.tensorboard_path, f"{key}{dt_extension}")
+            path = os.path.join(self.tensorboard_path, f"{key}")
 
         return path
 

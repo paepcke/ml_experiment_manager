@@ -19,10 +19,11 @@ from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThr
 from experiment_manager.neural_net_config import NeuralNetConfig
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
-#******TEST_ALL = True
-TEST_ALL = False
+TEST_ALL = True
+#TEST_ALL = False
 
 '''
 TODO:
@@ -125,7 +126,7 @@ class ExperimentManagerTest(unittest.TestCase):
         self.exp = exp
 
         tst_dict = {'foo' : 10, 'bar' : 20}
-        csv_file_path = exp.save(tst_dict, 'first_dict')
+        csv_file_path = exp.save('first_dict', tst_dict)
         
         with open(csv_file_path, 'r') as fd:
             reader = csv.DictReader(fd)
@@ -144,7 +145,7 @@ class ExperimentManagerTest(unittest.TestCase):
 
         # Add second row to the same csv:
         row2_dict = {'foo' : 100, 'bar' : 200}
-        exp.save(row2_dict, 'first_dict')
+        exp.save('first_dict', row2_dict)
         
         # Second row should be [100, 200]:
         with open(csv_file_path, 'r') as fd:
@@ -155,7 +156,7 @@ class ExperimentManagerTest(unittest.TestCase):
             self.assertEqual(list(row_dict1.values()), ['100','200'])
 
         # Should be able to just write a row, not a dict:
-        exp.save([1000,2000], 'first_dict')
+        exp.save('first_dict', [1000,2000])
         # Look at 3rd row should be ['1000', '2000']:
         with open(csv_file_path, 'r') as fd:
             reader = csv.DictReader(fd)
@@ -175,7 +176,7 @@ class ExperimentManagerTest(unittest.TestCase):
         exp = ExperimentManager(self.exp_root)
 
         tst_dict = {'foo' : 10, 'bar' : 20}
-        csv_file_path = exp.save(tst_dict, 'first_dict')
+        csv_file_path = exp.save('first_dict', tst_dict)
         exp.close()
         
         del exp
@@ -258,7 +259,7 @@ class ExperimentManagerTest(unittest.TestCase):
                            index= ['row1','row2','row3'])
 
         # Save without the row labels (i.e w/o the index):
-        dst_without_idx = exp.save(df, 'mydf')
+        dst_without_idx = exp.save('mydf', df)
         self.assertEqual(dst_without_idx, exp.csv_writers['mydf'].fd.name)
 
         df_retrieved_no_idx_saved = pd.read_csv(dst_without_idx)
@@ -272,7 +273,7 @@ class ExperimentManagerTest(unittest.TestCase):
         self.assertTrue((df_retrieved_no_idx_saved == df_true_no_idx).all().all())
 
         # Now save with index:
-        dst_with_idx = exp.save(df, 'mydf_with_idx', index_col='My Col Labels')
+        dst_with_idx = exp.save('mydf_with_idx', df, index_col='My Col Labels')
         df_true_with_idx = df_true_no_idx.copy()
         df_true_with_idx.index = ['row1', 'row2', 'row3']
         df_retrieved_with_idx_saved = pd.read_csv(dst_with_idx, index_col='My Col Labels')
@@ -293,8 +294,8 @@ class ExperimentManagerTest(unittest.TestCase):
         
         # All the above tests should work again:
         
-        df_no_idx   = pd.read_csv(exp1.abspath('mydf', 'csv'))
-        df_with_idx = pd.read_csv(exp1.abspath('mydf_with_idx', 'csv'), 
+        df_no_idx   = pd.read_csv(exp1.abspath('mydf', Datatype.tabular))
+        df_with_idx = pd.read_csv(exp1.abspath('mydf_with_idx', Datatype.tabular), 
                                   index_col='My Col Labels')
         self.assertTrue((df_no_idx == df_true_no_idx).all().all())
         self.assertTrue((df_with_idx == df_true_with_idx).all().all())
@@ -311,7 +312,7 @@ class ExperimentManagerTest(unittest.TestCase):
         self.exp = exp
         my_series = pd.Series([1,2,3], index=['One', 'Two', 'Three'])
         
-        dst = exp.save(my_series, 'series_test')
+        dst = exp.save('series_test', my_series)
         # Get a dataframe whose first row is the series:
         series_read = pd.read_csv(dst)
         first_row   = series_read.iloc[0,:] 
@@ -332,11 +333,11 @@ class ExperimentManagerTest(unittest.TestCase):
         
         # Start with saving a dict:
         my_dict = {'foo' : 1, 'bar' : 2}
-        exp.save(my_dict, 'my_results')
+        exp.save('my_results', my_dict)
         
         # Add a data frame to the same csv:
         df = pd.DataFrame([[3,4],[5,6],[7,8]], columns=['foo', 'bar'])
-        csv_path = exp.save(df, 'my_results')
+        csv_path = exp.save('my_results', df)
         
         rows = self.read_ints_from_csv(csv_path)
 
@@ -349,14 +350,14 @@ class ExperimentManagerTest(unittest.TestCase):
         
         # Add a row in the form of a pd Series:
         ser = pd.Series([9,10], index=['foo', 'bar'])
-        exp.save(ser, 'my_results')
+        exp.save('my_results', ser)
         expected.append([9,10])
         rows = self.read_ints_from_csv(csv_path)
         self.assertListEqual(rows, expected)
         
         # Add an np array:
         nparr = np.array([[11,12],[13,14]])
-        exp.save(nparr, 'my_results')
+        exp.save('my_results', nparr)
         expected.extend([[11,12],[13,14]])
         rows = self.read_ints_from_csv(csv_path)
         self.assertListEqual(rows, expected)
@@ -444,9 +445,9 @@ class ExperimentManagerTest(unittest.TestCase):
         index_strs = ['row0', 'row1']
         col_strs   = ['foo', 'bar', 'fum']
         tst_df = pd.DataFrame([[1,2,3], [4,5,6]], columns=col_strs, index=index_strs)
-        exp.save(tst_df, 'my_df')
+        exp.save('my_df', tst_df)
         config = NeuralNetConfig(self.hparams_path)
-        exp.save(config, 'my_config')
+        exp.save('my_config', config)
 
         exp.close()
         del exp
@@ -458,7 +459,7 @@ class ExperimentManagerTest(unittest.TestCase):
             
             self.assertEqual(exp1['foo'], 10)
             
-            df_path = exp1.abspath('my_df', 'csv')
+            df_path = exp1.abspath('my_df', Datatype.tabular)
             _recovered_df = pd.read_csv(df_path)
             #print(recovered_df)
             
@@ -472,7 +473,7 @@ class ExperimentManagerTest(unittest.TestCase):
     # test_abspath
     #-------------------
     
-    #********@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_abspath(self):
         
         # Pre-made experiment tree with some csv files,
@@ -484,7 +485,7 @@ class ExperimentManagerTest(unittest.TestCase):
         tst_dict = {'foo' : 10, 'bar' : 20}
         # Abspath result of a saved dict must match
         # the path returned by the save process:
-        csv_file_path = exp.save(tst_dict, 'first_dict')
+        csv_file_path = exp.save('first_dict', tst_dict)
         self.assertEqual(exp.abspath('first_dict', Datatype.tabular), csv_file_path)
         
         # Previously saved csv file, just for fun:
@@ -505,9 +506,52 @@ class ExperimentManagerTest(unittest.TestCase):
                          os.path.join(exp.hparams_path, 'my_hparams.json'))
 
         # Tensorboard    the-item (a dir name)   the-key
-        _dst = exp.save('my_tensorboard_dir', 'my_tensorboard')
-        self.assertEqual(exp.abspath('my_tensorboard', Datatype.tensorboard),
-                         os.path.join(exp.tensorboard_path, 'my_tensorboard_dir'))
+        _dst = exp.save('my_tensorboard')
+        tb_path = exp.abspath('my_tensorboard', Datatype.tensorboard)
+        self.assertEqual(tb_path, os.path.join(exp.tensorboard_path, 'my_tensorboard'))
+
+    #------------------------------------
+    # test_read
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_read(self):
+        
+        # Pre-made experiment tree with some csv files,
+        # a model, and a figure:
+        exp = ExperimentManager(self.prefab_exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+        
+        df_csv1_expected = pd.read_csv(self.csv1)
+        df_csv1 = exp.read('tiny_csv1', Datatype.tabular)
+        self.assertDataframesEqual(df_csv1, df_csv1_expected)
+        
+        model_path = os.path.join(exp.models_path, 'tiny_model.pth')
+        model_expected = torch.load(model_path)
+        model = exp.read('tiny_model', Datatype.model)
+        self.assertPytorchModelsEqual(model, model_expected)
+        
+        fig_path = os.path.join(exp.figs_path, 'tiny_png.png')
+        fig_expected = plt.imread(fig_path)
+        fig = exp.read('tiny_png', Datatype.figure)
+        self.assertTrue((fig == fig_expected).all())
+        
+        hparams_expected = NeuralNetConfig(self.hparams_path)
+        # File we created in setup is config.cfg:
+        hparams = exp.read('config', Datatype.hparams)
+        self.assertEqual(hparams, hparams_expected)
+        
+        # Case when the hparams are stored as a json file:
+        exp.save('config_json', hparams)
+        hparams_from_json = exp.read('config_json', Datatype.hparams)
+        self.assertEqual(hparams_from_json, hparams_expected)
+        
+        # Tensorboard: should just return the file name:
+        _dst = exp.save('my_tensorboard')
+        tb_expected  = os.path.join(exp.tensorboard_path, 'my_tensorboard')
+        tb_from_read = exp.read('my_tensorboard', Datatype.tensorboard)
+        self.assertEqual(tb_from_read, tb_expected)
 
     #------------------------------------
     # test_AutoSaveThread
@@ -621,6 +665,9 @@ class ExperimentManagerTest(unittest.TestCase):
             writer.writeheader()
             writer.writerow({'blue' : 'sky', 'green' : 'grass'})
             writer.writerow({'blue' : 'umbrella', 'green' : 'forest'})
+            
+        self.csv1 = csv1
+        self.csv2 = csv2
 
     #------------------------------------
     # makeGrayPNG
@@ -762,6 +809,28 @@ class ExperimentManagerTest(unittest.TestCase):
                 row = [int(el) for el in row]
                 rows.append(row)
         return rows
+
+    #------------------------------------
+    # assert_dataframes_equal
+    #-------------------
+    
+    def assertDataframesEqual(self, df1, df2):
+        self.assertTrue((df1.columns == df2.columns).all())
+        self.assertTrue((df1.index   == df2.index).all())
+        self.assertTrue((df1 == df2).all().all())
+        
+    #------------------------------------
+    # assertPytorchModelsEqual
+    #-------------------
+    
+    def assertPytorchModelsEqual(self, m1, m2):
+        
+        state1 = m1.state_dict()
+        state2 = m2.state_dict()
+        
+        for m1_val, m2_val in zip(state1.values(), state2.values()):
+            self.assertTrue((m1_val == m2_val).all().item())
+
 
 
 # -------------------- TinyModel --------------
