@@ -9,7 +9,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name = "ml_experiment_manager",
-    version = "0.1",
+    version = "0.1.1",
     #packages = find_packages(),
     test_suite='nose2.collector.collector',
     # Dependencies on other packages:
@@ -34,7 +34,7 @@ setup(
     long_description = long_description,
     license = "BSD",
     keywords = "machine learning",
-    url = "git@github.com:paepcke/ml_experiment_manager.git",   # project home page, if any
+    url = "https://github.com/paepcke/ml_experiment_manager.git"
 )
 
 print("To run tests, type 'nose2'")
