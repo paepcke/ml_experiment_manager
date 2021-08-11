@@ -9,8 +9,8 @@ with open("README.md", "r") as fh:
 
 setup(
     name = "ml_experiment_manager",
-    version = "0.1.2",
-    #packages = find_packages(),
+    version = "0.1.3",
+    packages = find_packages(),
     test_suite='nose2.collector.collector',
     # Dependencies on other packages:
     setup_requires   = ['pytest-runner'],
@@ -19,6 +19,7 @@ setup(
                         'numpy>=1.19.1',           
                         'torch>=1.7.1',       
                         'matplotlib>=3.3.0',
+                        'tensorboard>=2.6.0',
                         'nose2>=0.9.2',     # For testing
                         ],
 

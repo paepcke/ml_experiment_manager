@@ -176,7 +176,7 @@ TODO:
     # save 
     #-------------------
     
-    def save(self, key=None, item=None, index_col=None):
+    def save(self, key=None, item=None, index_col=None, header=None):
         '''
         Save any of:
             o pytorch model
@@ -190,23 +190,35 @@ TODO:
 
             o this experiment itself
             
-        If no item is provided, saves this experiment.
-        Though it is automatically saved anyway whenever 
+        If neither key nor item is provided, saves this experiment.
+        Though all state is automatically saved anyway whenever 
         a change is made, and when close() is called.
         
-        The key is the file name with or without .csv extension.
-        The file will exist in the self.csv_files_path under the experiment
-        root no matter what path is provided by key. Any parent of 
-        key is discarded. The intended form of key is just like:
+        The key is used as a file name. The file will be created
+        under the experiment root with an extension appropriate to
+        the information type. The intended form of key is like:
         
-            logits
-            prediction_numbers
-            measurement_results
+            'logits'
+            'prediction_numbers'
+            'measurement_results'
             
         The index_col is only relevant when saving
         dataframes. If provided, the df index (i.e. the row labels)
         are saved in the csv file with its own column, named
         index_col. Else the index is ignored.
+        
+        The header argument may be used for tabular data ahead of
+        saving any data. Useful if data will be saved as Python
+        lists or np arrays. In those cases the data themselves do
+        not reveal a header, as dicts, dataframes, and series instances 
+        do. If one of these self-revealing data are saved in a first
+        call to this method with the given key, then no prior call
+        providing a header is required.
+        
+        A call to this method with just a key and header will start
+        a csv file, writing the header row. It is an error to provide
+        a header after a call to this method that saved data. It is 
+        an error to provide both header and item.  
         
         Saving behaviors:
             o Models: 
@@ -242,9 +254,15 @@ TODO:
         :param index_col: for dataframes only: col name for
             the index; if None, index is ignored
         :type index_col: {None | str}
+        :param header: use given list as a header row; used only
+            without also providing item, and before a first save
+            of data with the given key
+        :type header: [str]
         :return: path to file where given data are stored 
             for persistence
         :rtype: str
+        :raise ValueError for inconsistent values in arguments
+        :raise TypeError for items with unrecognized type
         '''
         
         if item is None and key is None:
@@ -257,6 +275,16 @@ TODO:
         # If item is given, key must also be provided:
         if key is None:
             raise ValueError("Must provide an item key).")
+        
+        if header is not None:
+            # Item must be None, and the key must not
+            # yet exist, i.e. not allowed to add a header
+            # after a csv file is already started:
+            if item is not None:
+                raise ValueError("If supplying a header, item argument must be None")
+            if key in self.keys():
+                fpath = self.abspath(key, Datatype.tabular)
+                raise ValueError(f"A header can only be provided if csv file does not exist yet ({fpath})")
 
         # Key is is used as the key to the 
         # csv file in self.csv_writers, and as the file
@@ -267,7 +295,7 @@ TODO:
             key = Path(key).stem
         except Exception as _e:
             raise ValueError(f"First argument must be a data access key, not {key}")
-        
+
         if type(item) == nn:
             model = item
             # A pytorch model
@@ -276,8 +304,10 @@ TODO:
             #    dst = self._unique_fname(self.models_path, key)
             torch.save(model.state_dict(), dst)
 
-        elif type(item) in (dict, list, pd.Series, pd.DataFrame, np.ndarray):
-            dst = self._save_records(item, key, index_col)
+        elif header is not None or type(item) in (dict, list, pd.Series, pd.DataFrame, np.ndarray):
+            # Anything tabular, or None, if just writing a header
+            # to start a CSV file:
+            dst = self._save_records(item, key, index_col, header=header)
             
         elif isinstance(item, NeuralNetConfig):
             self.add_hparams(item, key)
@@ -608,7 +638,12 @@ TODO:
     #_save_records 
     #-------------------
 
-    def _save_records(self, item, fname, index_col=None, trust_list_dim=True):
+    def _save_records(self, 
+                      item, 
+                      fname, 
+                      index_col=None, 
+                      trust_list_dim=True,
+                      header=None):
         '''
         Saves items of types dict, list, Pandas Series,
         numpy arrays, and DataFrames to a csv file. Creates the csv
@@ -642,7 +677,10 @@ TODO:
         The trust_list_dim is relevant only for 2D lists. If True,
         trust that all rows of the list are the same length. Else
         each row's length is checked, and a ValueError thrown if
-        lengths are unequal. 
+        lengths are unequal.
+        
+        The header argument may be provided the first time any
+        data are saved to key.
             
         :param item: data to be written to csv file
         :type item: {dict | list | pd.Series | pd.DataFrame}
@@ -654,8 +692,12 @@ TODO:
         :param trust_list_dim: for 2D lists only: trust that all
             rows are of equal lengths
         :type trust_list_dim: True
+        :param header: column names to use as header in CSV file
+        :type header: [str] 
         :return full path to the csv file
         :rtype str
+        :raise TypeError if item type is unrecognized, or 
+            header is provided, but item is not None
         '''
 
         # Do we already have a csv writer for the given fname?
@@ -668,7 +710,8 @@ TODO:
             csv_writer = self.csv_writers[fname]
         except KeyError:
             # No CSV writer yet:
-            header = self._get_field_names(item, index_col=index_col, trust_list_dim=trust_list_dim)
+            if header is None:
+                header = self._get_field_names(item, index_col=index_col, trust_list_dim=trust_list_dim)
 
             fd = open(dst, 'w')
             csv_writer = csv.DictWriter(fd, header)
@@ -726,9 +769,13 @@ TODO:
                     csv_writer.writerow(self._arr_to_dict(row, header))
 
         # A dict:
-        else:
+        elif type(item) == dict:
             # This is a DictWriter's native food:
             csv_writer.writerow(item)
+
+        # If none of the above types, item must be None:
+        elif item is not None:
+            raise TypeError(f"Unknown item type {item}")
             
         csv_writer.fd.flush()
         return dst

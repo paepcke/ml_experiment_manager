@@ -200,6 +200,33 @@ class ExperimentManagerTest(unittest.TestCase):
         writers_dict = exp.csv_writers
         self.assertEqual(len(writers_dict), 1)
 
+
+    #------------------------------------
+    # test_csv_header_first
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_csv_header_first(self):
+
+        exp = ExperimentManager(self.exp_root)
+        self.exp = exp
+
+        csv_file_path = exp.save('header_first', item=None, header=['foo', 'bar'])
+
+        tst_list = [[1,2],[3,4]]
+        exp.save('header_first', tst_list)
+        exp.close()
+        
+        with open(csv_file_path, 'r') as fd:
+            reader = csv.DictReader(fd)
+            first_row_dict = next(reader)
+            expected = {'foo' : '1', 'bar' : '2'}
+            self.assertDictEqual(first_row_dict, expected)
+            
+            second_row_dict = next(reader)
+            expected = {'foo' : '3', 'bar' : '4'}
+            self.assertDictEqual(second_row_dict, expected)
+
     #------------------------------------
     # test_saving_hparams
     #-------------------
