@@ -9,7 +9,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name = "ml_experiment_manager",
-    version = "0.1.1",
+    version = "0.1.2",
     #packages = find_packages(),
     test_suite='nose2.collector.collector',
     # Dependencies on other packages:

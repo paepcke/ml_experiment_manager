@@ -26,6 +26,7 @@ import threading
 from enum import Enum
 
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from experiment_manager.neural_net_config import NeuralNetConfig, ConfigError
 import matplotlib.pyplot as plt
@@ -226,7 +227,13 @@ TODO:
                  with '_<n>' until it is unique among this
                  experiment's already saved figures. Uses
                  plt.savefig with file format taken from extension.
-                 If no extension provided in key, default is PDF 
+                 If no extension provided in key, default is PDF
+                 
+            o Tensorboard:
+                 if key is a string, it is assumed to pertain to 
+                 tensorboard management. A subdirectory of name <key>
+                 is created below the exp root. Argument <item> is
+                 ignored 
 
         :param key: key for retrieving the file path and DictWriter
         :type key: str
@@ -249,9 +256,9 @@ TODO:
 
         # If item is given, key must also be provided:
         if key is None:
-            raise ValueError("Must provide file name (i.e. the item key).")
+            raise ValueError("Must provide an item key).")
 
-        # Fname is intended for use as the key to the 
+        # Key is is used as the key to the 
         # csv file in self.csv_writers, and as the file
         # name inside of self.csv_files_path. So, clean
         # up what's given to us: remove parent dirs and
@@ -286,9 +293,10 @@ TODO:
             #    dst = self._unique_fname(self.figs_path, key)
             plt.savefig(fig, dpi=150, format=file_format)
             
-        elif item is None and type(key) == str:
-            # Create a new subdirectory of tensorboard:
+        elif type(key) == str:
+            # Assume this starts a tensorboard data repo.
             dst = os.path.join(self.tensorboard_path, key)
+            # If not given a tensorboard SummaryReader, create one:
             os.makedirs(dst, exist_ok=True)
 
         else:
