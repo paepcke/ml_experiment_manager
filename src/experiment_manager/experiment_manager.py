@@ -26,7 +26,6 @@ import threading
 from enum import Enum
 
 import torch
-from torch.utils.tensorboard import SummaryWriter
 
 from experiment_manager.neural_net_config import NeuralNetConfig, ConfigError
 import matplotlib.pyplot as plt
@@ -132,9 +131,6 @@ TODO:
             with open(experiment_json_path, 'r') as fd:
                 restored_dict_contents = json.load(fd)
                 self.update(restored_dict_contents)
-
-        if 'class_names' not in list(self.keys()):
-            self['class_names'] = None
 
         self.models_path       = os.path.join(self.root, 'models')
         self.figs_path         = os.path.join(self.root, 'figs')
@@ -296,7 +292,7 @@ TODO:
         except Exception as _e:
             raise ValueError(f"First argument must be a data access key, not {key}")
 
-        if type(item) == nn:
+        if isinstance(item, nn.Module):
             model = item
             # A pytorch model
             dst = os.path.join(self.models_path, key)
@@ -310,7 +306,7 @@ TODO:
             dst = self._save_records(item, key, index_col, header=header)
             
         elif isinstance(item, NeuralNetConfig):
-            self.add_hparams(item, key)
+            self.add_hparams(key, item)
             dst = os.path.join(self.hparams_path, f"{key}.json")
 
         elif type(item) == plt.Figure:
@@ -340,7 +336,7 @@ TODO:
     # add_hparams
     #-------------------
     
-    def add_hparams(self, config_fname_or_obj, key):
+    def add_hparams(self, key, config_fname_or_obj):
         '''
         If config_fname_or_obj is a string, it is assumed
         to be a configuration file readable by NeuralNetConfig
@@ -356,13 +352,13 @@ TODO:
         May be called by client, but is also called by save()
         when client calls save() with a config instance.
         
+        :param key: key under which the config is to be
+            available
+        :type key: str
         :param config_fname_or_obj: path to config file that is
             readable by the standard ConfigParser facility. Or
             an already finished NeuralNetConfig instance
         :type config_fname_or_obj: {src | NeuralNetConfig}
-        :param key: key under which the config is to be
-            available
-        :type key: str
         :return a NeuralNetConfig instance 
         :rtype NeuralNetConfig
         '''
@@ -407,6 +403,16 @@ TODO:
            figure         pyplot Figure
            hparams        NeuralNetConfig
            tensorboard    Path to tensorboard information
+           
+        Note: if for tabular data the client rather works with 
+            a csv reader for row-by-row processing the following
+            or similar could be used:
+            
+            path = csv.abspath(<key>, Datatype.tabular)
+            with open(path, 'r') as fd:
+                reader = csv.DictReader(fd)
+                for row_dict in reader:
+                    ...
         
         :param key: name of the item to be retrieved
         :type key: str
@@ -441,6 +447,32 @@ TODO:
                     return NeuralNetConfig(path)
         elif datatype == Datatype.tensorboard:
             return path
+
+    #------------------------------------
+    # col_names
+    #-------------------
+    
+    def col_names(self, key):
+        '''
+        Retrieve the column name of tabularly stored
+        data. I.e. dataframes, series, dicts, lists, 
+        numpy arrays.
+        
+        :param key: data item's key
+        :type key: str
+        :return the field (i.e. column) names in the 
+            csv header
+        :rtype [str]
+        :raises KeyError if key does not exist for any
+            tabular data
+        '''
+        
+        try:
+            writer = self.csv_writers[key]
+        except KeyError:
+            raise KeyError(f"Experiment stores no tabular data under key '{key}'")
+        return writer.fieldnames
+
 
     #------------------------------------
     # abspath
@@ -997,12 +1029,6 @@ TODO:
         Write json of info about this experiment
         to self.root/experiment.json
         '''
-        
-        # Insist on the class names to have been set:
-        #try:
-        #    self['class_names']
-        #except KeyError:
-        #    raise ValueError("Cannot save experiment without class_names having been set first")
 
         # If config facility is being used, turn
         # the NeuralNetConfig instance to json:

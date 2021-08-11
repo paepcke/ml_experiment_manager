@@ -236,7 +236,7 @@ class ExperimentManagerTest(unittest.TestCase):
         
         exp = ExperimentManager(self.exp_root)
 
-        exp.add_hparams(self.hparams_path, 'my_config')
+        exp.add_hparams('my_config', self.hparams_path)
         config_obj = exp['my_config']
                          
         # Should have a json export of the config instance:
@@ -528,7 +528,7 @@ class ExperimentManagerTest(unittest.TestCase):
                          os.path.join(exp.figs_path, 'tiny_png.png'))
 
         # H-parameters
-        exp.add_hparams(self.hparams_path, 'my_hparams')
+        exp.add_hparams('my_hparams', self.hparams_path)
         self.assertEqual(exp.abspath('my_hparams', Datatype.hparams), 
                          os.path.join(exp.hparams_path, 'my_hparams.json'))
 
