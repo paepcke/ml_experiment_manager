@@ -27,12 +27,16 @@ Examples: an experiment instance is started to retain all data in
 subdirectories of MyExperiment under the current directory. All
 archived data will reside under this root.
 
+'''
+    pip install ml-experiment-manager
+'''
+
 The primary method is `save()`, which accepts an arbitrary string
 **key**, and data of varying types. The method stores the data in
 files appropriate for those types:
   
 ```
-    from experiment_manager import ExperimentManager, Datatype
+    from experiment_manager.experiment_manager import ExperimentManager, Datatype
     
     experiment_archive = os.path.join(os.path.dirname(__file__), 'MyExperiment')
     exp = ExperimentManager(experiment_archive)
