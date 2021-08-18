@@ -460,6 +460,47 @@ class ExperimentManagerTest(unittest.TestCase):
         exp.auto_save_thread.cancel()
 
     #------------------------------------
+    # test_destroy
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_destroy(self):
+        
+        exp = ExperimentManager(self.exp_root)
+
+        exp.save('foo', pd.Series([1,2,3], index=['blue', 'green', 'yellow']))
+        expected_path = os.path.join(exp.csv_files_path, 'foo.csv')
+        writer = exp.csv_writers['foo']
+        self.assertFalse(writer.fd.closed)
+        self.assertTrue(os.path.exists(expected_path))
+        
+        # Now delete the file:
+        exp.destroy('foo', Datatype.tabular)
+        self.assertFalse(os.path.exists(expected_path))
+        self.assertTrue(writer.fd.closed)
+
+        # Same for Figure:
+        fig = plt.Figure()
+
+        exp.save('bar', fig)
+        expected_path = os.path.join(exp.figs_path, 'bar.pdf')
+        self.assertTrue(os.path.exists(expected_path))
+        
+        exp.destroy('bar', Datatype.figure)
+        self.assertFalse(os.path.exists(expected_path))
+
+        # Same with tensorboard info, which should clear
+        # out a tensorboard directory:
+        exp.save('my_tensorboard')
+        expected_path = os.path.join(exp.tensorboard_path, 'my_tensorboard')
+        self.assertTrue(os.path.exists(expected_path) and os.path.isdir(expected_path))
+        self.assertTrue(len(os.listdir(exp.tensorboard_path)) == 1)
+        
+        exp.destroy('my_tensorboard', Datatype.tensorboard)
+        self.assertTrue(os.path.exists(exp.tensorboard_path))
+        self.assertTrue(len(os.listdir(exp.tensorboard_path)) == 0)
+
+    #------------------------------------
     # test_root_movability
     #-------------------
     

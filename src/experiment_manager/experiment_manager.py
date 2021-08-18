@@ -314,10 +314,9 @@ TODO:
             fname_ext   = Path(key).suffix
             # Remove the leading period if extension provided:
             file_format = 'pdf' if len(fname_ext) == 0 else fname_ext[1:] 
-            dst = os.path.join(self.figs_path, key)
-            #if os.path.exists(dst):
-            #    dst = self._unique_fname(self.figs_path, key)
-            plt.savefig(fig, dpi=150, format=file_format)
+            dst = os.path.join(self.figs_path, f"{key}.{file_format}")
+            
+            fig.savefig(dst, dpi=150, format=file_format)
             
         elif type(key) == str:
             # Assume this starts a tensorboard data repo.
@@ -331,6 +330,43 @@ TODO:
         # Update the saved state of this experiment instance
         self.save()
         return dst
+
+    #------------------------------------
+    # destroy
+    #-------------------
+    
+    def destroy(self, key, datatype):
+        '''
+        Inverse of save(): close any csv reader on the
+        experiment-controlled file to which key refers.
+        Then delete the file.
+        
+        :param key:
+        :type key:
+        '''
+        if type(datatype) != Datatype:
+            raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
+        
+        path = self.abspath(key, datatype)
+        if path is None or not os.path.exists(path):
+            raise FileNotFoundError(f"Cannot find file/dir corresponding to key {key} of type Datatype.{datatype.name}")
+
+        if datatype == Datatype.tabular:
+            try:
+                # If there is an open writer, close it:
+                writer = self.csv_writers[key]
+                writer.fd.close()
+            except KeyError:
+                # No writer open; OK
+                pass
+            os.remove(path)
+
+        elif datatype in (Datatype.model, Datatype.figure, Datatype.hparams): 
+            os.remove(path)
+
+        elif datatype == Datatype.tensorboard:
+            shutil.rmtree(self.tensorboard_path, ignore_errors=True)
+            os.makedirs(self.tensorboard_path)
 
     #------------------------------------
     # add_hparams
@@ -428,13 +464,19 @@ TODO:
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
         
         path = self.abspath(key, datatype)
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Cannot find file/dir corresponding to {key} of type {datatype.name}")
+        if path is None or not os.path.exists(path):
+            raise FileNotFoundError(f"Cannot find file/dir corresponding to key {key} of type Datatype.{datatype.name}")
 
         if datatype == Datatype.tabular:
             return pd.read_csv(path)
         elif datatype == Datatype.model:
-            return torch.load(path)
+            # Protect against training having been on GPU, but
+            # testing on CPU-only:
+            try:
+                return torch.load(path)
+            except RuntimeError:
+                if not torch.cuda.is_available():
+                    torch.load(path, map_location=torch.device('cpu'))
         elif datatype == Datatype.figure:
             return plt.imread(path)
         elif datatype == Datatype.hparams:
@@ -571,8 +613,8 @@ TODO:
         configuration files.
         
         (Re)creates NeuralNetConfig instances, and sets value of
-        the corresponding keys to those instances. Keys
-        are the file names without extension.
+        the corresponding keys in the dict API to those instances. 
+        Keys are the file names without extension.
 
 
         '''
@@ -595,6 +637,9 @@ TODO:
                 # configparser syntax:
                 config = NeuralNetConfig(path)
             key = Path(path).stem
+            # Set a dict-API key/val pair with key
+            # equal to the configuration file w/o 
+            # extension:
             self[key] = config
 
     #------------------------------------
@@ -1046,10 +1091,10 @@ TODO:
         self._cancel_save()
 
     #------------------------------------
-    # _is_experiment_file 
+    # _is_experiment_path 
     #-------------------
     
-    def _is_experiment_file(self, path):
+    def _is_experiment_path(self, path):
         '''
         Return True if the given path is 
         below the experiment root directory
@@ -1063,6 +1108,34 @@ TODO:
             return True
         else:
             return False
+
+
+    #------------------------------------
+    # _experiment_file_name 
+    #-------------------
+    
+    def _experiment_file_name(self, key):
+        '''
+        If a file exists under the root dir with the
+        name key (after extension is removed), method
+        returns an absolute path to that file. Else 
+        returns None.
+
+        Used when ensuring that a dict key does not conflict with 
+        a key that leads to a an experiment file.
+         
+        :param key: key to examine
+        :type key: str
+        :return True if file with any extension but
+            named the same as key exists under the root
+            directory
+        :rtype: bool
+        '''
+        for search_root, _dirs, fnames in os.walk(self.root):
+            for fname in fnames:
+                if Path(fname).stem == key:
+                    return os.path.join(search_root, fname)
+        return None
 
 
     #------------------------------------
@@ -1184,6 +1257,7 @@ TODO:
         :param item: value to map to
         :type item: any
         '''
+
         super().__setitem__(key, item)
         self._schedule_save()
 
@@ -1205,29 +1279,9 @@ TODO:
     
     def __delitem__(self, key):
         
-        # Allow KeyError to bubble up to client,
-        # if the key doesn't exist:
-        item = self[key]
-        
-        # If a DictWriter, close it, and delete the file:
-        if type(item) == csv.DictWriter:
-            path = item.fd.name
-            # Only delete file if it's under the
-            # exeriment root. Else it could be a
-            # DictWriter saved under a top level
-            # user key, and owned by them:
-            if self._is_experiment_file(path):
-                item.fd.close()
-                os.remove(path)
-        elif self._is_experiment_file(item):
-            # If this is a file in the experiment
-            # tree, delete it:
-            os.remove(item)
-
         # Delete the key/val pair:
         super().__delitem__(key)
         self._schedule_save()
-
 
 # ------------------- Class AutoSaveThread -----------------
 
