@@ -29,6 +29,7 @@ import torch
 
 from experiment_manager.neural_net_config import NeuralNetConfig, ConfigError
 import matplotlib.pyplot as plt
+from PIL import UnidentifiedImageError
 import pandas as pd
 import torch.nn as nn
 import numpy as np
@@ -295,7 +296,7 @@ TODO:
         if isinstance(item, nn.Module):
             model = item
             # A pytorch model
-            dst = os.path.join(self.models_path, key)
+            dst = os.path.join(self.models_path, f"{key}.pth")
             #if os.path.exists(dst):
             #    dst = self._unique_fname(self.models_path, key)
             torch.save(model.state_dict(), dst)
@@ -303,7 +304,7 @@ TODO:
         elif header is not None or type(item) in (dict, list, pd.Series, pd.DataFrame, np.ndarray):
             # Anything tabular, or None, if just writing a header
             # to start a CSV file:
-            dst = self._save_records(item, key, index_col, header=header)
+            dst = self._save_records(item, key, index_col=index_col, header=header)
             
         elif isinstance(item, NeuralNetConfig):
             self.add_hparams(key, item)
@@ -465,7 +466,7 @@ TODO:
         
         path = self.abspath(key, datatype)
         if path is None or not os.path.exists(path):
-            raise FileNotFoundError(f"Cannot find file/dir corresponding to key {key} of type Datatype.{datatype.name}")
+            raise FileNotFoundError(f"Cannot find file/dir corresponding to key '{key}' of type Datatype.{datatype.name}")
 
         if datatype == Datatype.tabular:
             return pd.read_csv(path)
@@ -478,7 +479,10 @@ TODO:
                 if not torch.cuda.is_available():
                     torch.load(path, map_location=torch.device('cpu'))
         elif datatype == Datatype.figure:
-            return plt.imread(path)
+            try:
+                return plt.imread(path)
+            except UnidentifiedImageError:
+                raise TypeError(f"File exists, but cannot read file of type {Path(path).suffix} as an image")
         elif datatype == Datatype.hparams:
             with open(path, 'r') as fd:
                 if Path(path).suffix == '.json':
@@ -525,15 +529,20 @@ TODO:
         Given the key used in a previous save()
         call, and the datatype (Datatype.tabular, 
         Datatype.model, etc.): returns the path
-        to the file where the item is stored.
+        to the file where the item is stored. If
+        a file of that key does not exist, returns
+        None.
         
         :param key: name of the item whose filename
             is to be retrieved
         :type key: str
         :param datatype: the Datatype of the item
         :type extension: Datatype enum member
-        :returns absolute path to corresponding file
+        :returns absolute path to corresponding file, or
+            None if file does not exist
         :rtype str
+        :raise TypeError for incorrect argument type
+        :
         '''
         if type(datatype) != Datatype:
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
