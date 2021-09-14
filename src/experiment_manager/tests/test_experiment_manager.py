@@ -13,13 +13,14 @@ import tempfile
 import unittest
 import zlib
 
+import skorch
 import torch
 
 from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread, Datatype
 from experiment_manager.neural_net_config import NeuralNetConfig
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
 TEST_ALL = True
@@ -55,8 +56,18 @@ class ExperimentManagerTest(unittest.TestCase):
         models_dir = os.path.join(self.prefab_exp_root,'models')
         os.makedirs(models_dir)
         model_path = os.path.join(models_dir, 'tiny_model.pth')
-        tiny_model = TinyModel()
-        torch.save(tiny_model, model_path)
+        self.tiny_model = TinyModel()
+        torch.save(self.tiny_model.state_dict(), model_path)
+        
+        # Same for a skorch model:
+        self.tiny_skorch = skorch.classifier.NeuralNetBinaryClassifier(TinyModel)
+        self.tiny_skorch.initialize()
+        self.skorch_model_path = os.path.join(models_dir, 'tiny_skorch.pkl')
+        self.skorch_opt_path   = os.path.join(models_dir, 'optimizer.pkl')
+        self.skorch_hist_path  = os.path.join(models_dir, 'history.json')
+        self.tiny_skorch.save_params(f_params=self.skorch_model_path, 
+                                     f_optimizer=self.skorch_opt_path, 
+                                     f_history=self.skorch_hist_path)
         
         # Create two little csv files:
         csvs_dir   = os.path.join(self.prefab_exp_root,'csv_files')
@@ -591,14 +602,27 @@ class ExperimentManagerTest(unittest.TestCase):
         # For cleanup in tearDown():
         self.exp = exp
         
+        # Test reading csv files:
         df_csv1_expected = pd.read_csv(self.csv1)
         df_csv1 = exp.read('tiny_csv1', Datatype.tabular)
         self.assertDataframesEqual(df_csv1, df_csv1_expected)
         
+        # Test loading state dict into existing pytorch model:
         model_path = os.path.join(exp.models_path, 'tiny_model.pth')
-        model_expected = torch.load(model_path)
-        model = exp.read('tiny_model', Datatype.model)
-        self.assertPytorchModelsEqual(model, model_expected)
+        new_tiny_model = TinyModel()
+        new_tiny_model.load_state_dict(torch.load(model_path))
+        model = exp.read('tiny_model', Datatype.model, self.tiny_model)
+        self.assertPytorchModelsEqual(model, new_tiny_model)
+        
+        # Test loading state dict into existing skorch model:
+        new_tiny_skorch_model = skorch.classifier.NeuralNetBinaryClassifier(TinyModel)
+        new_tiny_skorch_model.initialize()
+        new_tiny_skorch_model.load_params(f_params=self.skorch_model_path,
+                                          f_optimizer=self.skorch_opt_path,
+                                          f_history=self.skorch_hist_path)
+        skorch_model = exp.read('tiny_skorch', Datatype.model, self.tiny_skorch)
+        self.assertSkorchModelsEqual(skorch_model, new_tiny_skorch_model)
+
         
         fig_path = os.path.join(exp.figs_path, 'tiny_png.png')
         fig_expected = plt.imread(fig_path)
@@ -895,6 +919,18 @@ class ExperimentManagerTest(unittest.TestCase):
         
         state1 = m1.state_dict()
         state2 = m2.state_dict()
+        
+        for m1_val, m2_val in zip(state1.values(), state2.values()):
+            self.assertTrue((m1_val == m2_val).all().item())
+
+    #------------------------------------
+    # assertScorchModelsEqual
+    #-------------------
+    
+    def assertSkorchModelsEqual(self, m1, m2):
+        
+        state1 = m1.module_.state_dict()
+        state2 = m2.module_.state_dict()
         
         for m1_val, m2_val in zip(state1.values(), state2.values()):
             self.assertTrue((m1_val == m2_val).all().item())

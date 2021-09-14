@@ -18,21 +18,23 @@ TODO:
 '''
 
 import csv
+from enum import Enum
 import json 
 import os
 from pathlib import Path
 import shutil
 import threading
-from enum import Enum
 
+from PIL import UnidentifiedImageError
 import torch
+import skorch
 
 from experiment_manager.neural_net_config import NeuralNetConfig, ConfigError
 import matplotlib.pyplot as plt
-from PIL import UnidentifiedImageError
+import numpy as np
 import pandas as pd
 import torch.nn as nn
-import numpy as np
+
 
 class Datatype(Enum):
     tabular 	= '.csv'
@@ -293,6 +295,13 @@ TODO:
         except Exception as _e:
             raise ValueError(f"First argument must be a data access key, not {key}")
 
+        if isinstance(item, skorch.classifier.NeuralNet):
+            model = item
+            dst = os.path.join(self.models_path, f"{key}.pkl")
+            optimizer_path = os.path.join(self.models_path, 'opt.pkl')
+            history_path   = os.path.join(self.models_path, 'history.json')
+            model.save_params(dst, f_optimizer=optimizer_path, f_history=history_path)
+
         if isinstance(item, nn.Module):
             model = item
             # A pytorch model
@@ -427,7 +436,7 @@ TODO:
     # read
     #-----
     
-    def read(self, key, datatype):
+    def read(self, key, datatype, initialized_net=None):
         '''
         Given the key used in a previous save()
         call, and the datatype (Datatype.tabular, 
@@ -440,6 +449,10 @@ TODO:
            figure         pyplot Figure
            hparams        NeuralNetConfig
            tensorboard    Path to tensorboard information
+
+        For reading skorch models requires the initialized_skorch_net
+        kwarg. The saved information will be added to
+        that initialized net.
            
         Note: if for tabular data the client rather works with 
             a csv reader for row-by-row processing the following
@@ -457,6 +470,9 @@ TODO:
             a table (i.e. csv file), a figure (.pdf/.png, etc),
             or one of the other Datatype enums
         :type datatype: Datatype
+        :param initialized_net: initialized neural net; only
+            needed for models 
+        :type initialized_net: {skorch.classifier.NeuralNet | torch.nn.Module
         :returns retrieved item
         :rtype {any}
         '''
@@ -464,20 +480,36 @@ TODO:
         if type(datatype) != Datatype:
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
         
+        
+        
         path = self.abspath(key, datatype)
-        if path is None or not os.path.exists(path):
-            raise FileNotFoundError(f"Cannot find file/dir corresponding to key '{key}' of type Datatype.{datatype.name}")
+        not_exists_err_msg = f"Cannot find file/dir corresponding to key '{key}' of type Datatype.{datatype.name}" 
+        if path is None:
+            raise FileNotFoundError(not_exists_err_msg)
+        
+        # For Datatype.model, the suffix will be
+        # .pth for pytorch, or .pkl for skorch:
+        if datatype == Datatype.model:
+            root = Path(path).parent
+            pytorch_model_path = root.joinpath(Path(path).stem + '.pth')
+            skorch_model_path  = root.joinpath(Path(path).stem + '.pkl')
+            if not pytorch_model_path.exists() and not skorch_model_path.exists():
+                raise FileNotFoundError(not_exists_err_msg)
+        else:
+            if path is None or not os.path.exists(path):
+                raise FileNotFoundError(not_exists_err_msg)
 
         if datatype == Datatype.tabular:
             return pd.read_csv(path)
+        
         elif datatype == Datatype.model:
-            # Protect against training having been on GPU, but
-            # testing on CPU-only:
-            try:
-                return torch.load(path)
-            except RuntimeError:
-                if not torch.cuda.is_available():
-                    torch.load(path, map_location=torch.device('cpu'))
+            # Could be a pytorch model (.pth) or
+            # a skorch model (.pkl) (though underneath
+            # they are all pytorch state_dict exports.
+            # But for skorch we also have optimizer and
+            # history state, so loading is different:
+            return self._load_model(path, initialized_net)
+
         elif datatype == Datatype.figure:
             try:
                 return plt.imread(path)
@@ -609,7 +641,76 @@ TODO:
 
 
     # --------------- Private Methods --------------------
+
+    #------------------------------------
+    # _load_model
+    #-------------------
     
+    def _load_model(self, path, net):
+        '''
+        Load previously saved weights back
+        into a given model. Handles pytorch and
+        skorch models.
+        
+        For skorch models, net.initialize() must
+        have been called by the client. For those
+        models, the optimizer and history will also 
+        be loaded into the model. That is not the case
+        for pytorch models.
+        
+        Distinguishes between the model types by the 
+        file exension: .pth for pytorch, .pkl for skorch
+        models.
+        
+        Fun Fact: saved skorch models reportedly use pytorch's
+        state_dict() export under the hood. So in theory a
+        skorch model should be loadable into a pytorch net.
+        
+        :param path: path to either .pkl or .pth model file
+        :type path: str
+        :param net: either pytorch or skorch net
+        :type net: {torch.nn.Module | skorch.classifier.NeuralNet}
+        :return the net with newly loaded weights
+        :rtype {torch.nn.Module | skorch.classifier.NeuralNet}
+        '''
+
+        net_path_p = Path(path)
+        if isinstance(net, torch.nn.Module):
+            # Protect against training having been on GPU, but
+            # testing on CPU-only:
+            try:
+                net.load_state_dict(torch.load(path))
+            except RuntimeError:
+                if not torch.cuda.is_available():
+                    net.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+        
+        elif isinstance(net, skorch.classifier.NeuralNet):
+            try:
+                # skorch models have extension .pkl, the
+                # default model path matches the pytorch convention
+                # of .pth. Correct the extension:
+                net_path_p = net_path_p.parent.joinpath(net_path_p.stem + '.pkl')
+                
+                optimizer_path = net_path_p.parent.joinpath('optimizer.pkl')
+                history_path   = net_path_p.parent.joinpath('history.json')
+                net.load_params(
+                    f_params=net_path_p, 
+                    f_optimizer=str(optimizer_path),
+                    f_history=str(history_path)
+                    )
+            except RuntimeError:
+                if not torch.cuda.is_available():
+                    net.load_params(
+                        f_params=path, 
+                        f_optimizer=str(optimizer_path),
+                        f_history=str(history_path),
+                        map_location=torch.device('cpu')
+                        )
+        else:
+            raise TypeError(f"The network passed into read() must be a pytorch or skorch net, not {type(net)}")
+            
+        return net
+
     #------------------------------------
     # _open_config_files 
     #-------------------
@@ -679,12 +780,12 @@ TODO:
                     col_names = csv.DictReader(fd).fieldnames
             
                 # Make the writer:
-                with open(path, 'a') as fd:
-                    writer = csv.DictWriter(fd, col_names)
-                    writer.fd = fd
-                    key = Path(path).stem
-                    self[key] = writer.fd.name
-                    self.csv_writers[key] = writer 
+                fd = open(path, 'a')
+                writer = csv.DictWriter(fd, col_names)
+                writer.fd = fd
+                key = Path(path).stem
+                self[key] = writer.fd.name
+                self.csv_writers[key] = writer 
 
     #------------------------------------
     # _schedule_save 
@@ -843,7 +944,16 @@ TODO:
                     csv_writer.writerow(row_dict)
             else:
                 for row_dict in self._collapse_df_index_dict(item, index_col):
-                    csv_writer.writerow(row_dict)
+                    try:
+                        csv_writer.writerow(row_dict)
+                    except ValueError as e:
+                        # Typical cause of a value error is 
+                        # that csv_writer was closed. Add debug
+                        # info and re-raise:
+                        msg = "While writing csv record: "
+                        if type(csv_writer) == csv.DictWriter:
+                            msg += f"fname is {csv_writer.fd.name}; "
+                        raise ValueError(f"{msg} {repr(e)}") from e
                     
         # Numpy array or Python list:
         elif type(item) in(np.ndarray, list):
@@ -1154,7 +1264,7 @@ TODO:
     def _create_dir_if_not_exists(self, path):
         
         if not os.path.exists(path):
-            os.makedirs(path)
+            os.makedirs(path, exist_ok=True)
             return
         # Make sure the existing path is a dir:
         if not os.path.isdir(path):
