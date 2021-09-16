@@ -1,12 +1,12 @@
 # Machine Learning Experiment Manager
-Simply manage pytorch models, hparams, output charts, and results CSV files
+Simply manage pytorch and skorch models, hparams, output charts, and results CSV files
 
 Container to hold all information about an experiment: tabular data
 created during training and inference, hyper parameters, charts,
-tensorboard entries, and (pytorch) model snapshots. These data are
+tensorboard entries, and (pytorch/skorch) model snapshots. These data are
 stored on disk in standard formats that are accessible by other tools,
 such as Excel and image viewers. Except for model snapshots, the
-facility is ML platform agnostic. Only pytorch model instances are
+facility is ML platform agnostic. Only pytorch and skorch model instances are
 currently handled for saving, though all other features remain fully
 functional.
 
@@ -18,8 +18,9 @@ Selected Details:
 - Creates human-readable files under a single directory root
 - Entire experiment archives are movable/copyable with standard OS tools.
 - Files on disk are .csv, for tables, Pandas Series and DataFrame
-  instances, pdf, png, etc. for pyplot figures, and state_dict .pth
-  files for pytorch models.
+  instances, pdf, png, etc. for pyplot figures, state_dict .pth
+  files for pytorch models, and .pkl save_params exports of skorch
+  models.
 
 # Starting an Experiment and Saving Data
 
@@ -55,8 +56,9 @@ files appropriate for those types:
                            columns=['foo', 'bar'])
     exp.save('my_tbl', df_more)
 
-    # Save a pytorch model snapshot; the manager will save the state_dict,
-    # using torch.save():
+    # Save a pytorch or skorch model snapshot; the manager will save the state_dict,
+    # using torch.save() or model.save_params() for skorch models. The type of
+    # model is detected automatically:
     # 
     exp.save('model_snaphot1', model1)
 
@@ -108,9 +110,12 @@ the data key and the type of data being requested.
    # A pyplot Figure instance:
    my_fig    = exp.read('pr_figure.pdf', Datatype.figure)
 
-   # A pytorch model state dict that can then
-   # be loaded into a pytorch module:
-   my_model_state_dict  = exp.read('model_snaphot1', Datatype.model)
+   # Pytorch and skorch model retrievals work by
+   # creating an uninitialized model, i.e. a pytorch module,
+   # or a skorch net. That model is passed to read, which
+   # returns the model with state initialized.
+   my_model = <create torch.nn.Module or skorch.classifier.NeuralNet>
+   my_model_initialized  = exp.read('model_snaphot1', Datatype.model, initialized_net=my_model)
 
    # A [hyperparameter configuration][#hyperparameters]:
    config = exp.read('hparams')
