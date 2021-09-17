@@ -381,6 +381,56 @@ class NeuralNetConfig(DottableConfigParser):
         else:
             super().__setattr__(prop_name, new_val)
 
+    #------------------------------------
+    # __getstate__
+    #-------------------
+    
+    def __getstate__(self):
+        '''
+        Used by pickle. Without this method, an attempt
+        to pickle an instance of this class will complain
+        that objects of type 'property' cannot be pickled.
+        
+        Strategy: only pass back to the Pickler the non-property
+        instances. The copying of the values seems important,
+        even when those values should be picklable.
+        
+        :return: an except of this instance's __dict__ that only
+            contains safely picklable values.
+        :rtype: {str : <picklable-values>}
+        '''
+        safe_state_dict = {}
+        for state_name, state_val in self.__dict__.items():
+            if type(state_val) != property:
+                safe_state_dict[state_name] = self.__dict__[state_name].copy()
+        return safe_state_dict
+    
+    #------------------------------------
+    # __setstate__ 
+    #-------------------
+    
+    def __setstate__(self, state):
+        '''
+        Called by Pickler instances, which pass
+        the state that was returned by this class'
+        __getstate__() method. Update this instance,
+        which is in the process of being reconstituted
+        to reflect the state of the original instance.
+        
+        :param state: except of the original instance's
+            state
+        :type state: {str : <picklable-values>}
+        '''
+        
+        self.__dict__.update(state)
+        
+        # Create convenience properties
+        # (getters and setters) for known
+        # nn parameters (listed in NEURAL_NET_ATTRS).
+        # This normally happens in the __init__()
+        # method.
+        
+        self.define_nn_properties()
 
     # ---------------- Setters ----------
 

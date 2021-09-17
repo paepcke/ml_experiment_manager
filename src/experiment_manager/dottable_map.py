@@ -28,6 +28,39 @@ class DottableMap(dict):
             for k, v in kwargs.items():
                 self[k] = v
 
+    def __getstate__(self):
+        '''
+        Called by Pickler instances to 
+        gather this instance's state for
+        pickling. Needed because otherwise
+        the __getattr__() metod is called
+        when the Pickler calls the __getstate__
+        method. Then __getattr__ returns None,
+        because there is no data attribute of
+        that name.
+
+        :return: an except of this instance's __dict__ that only
+            contains safely picklable values.
+        :rtype: {str : <picklable-values>}
+        '''
+        return self.__dict__
+
+    def __setstate__(self, state):
+        '''
+        Called by Pickler instances to install
+        state in self, which is being reconstituted
+        at the time of a call to this method. Simply
+        update self's state to include the passed-in
+        dict.
+
+        :param state: except of the original instance's
+            state
+        :type state: {str : <picklable-values>}
+
+        '''
+        
+        self.__dict__.update(state)
+
     def __getattr__(self, attr):
         return self.get(attr)
 

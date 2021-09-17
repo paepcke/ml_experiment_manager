@@ -5,12 +5,14 @@ Created on Feb 4, 2021
 '''
 import io
 import os
+import pickle
 import tempfile
 import unittest
 
-from birdsong.utils.neural_net_config import NeuralNetConfig
+from experiment_manager.neural_net_config import NeuralNetConfig
 
 
+#from experiment_manager.dottable_config import DottableConfigParser
 TEST_ALL = True
 #TEST_ALL = False
 
@@ -25,6 +27,8 @@ class NeuralNetConfigTest(unittest.TestCase):
     def setUp(self):
         cfg_file = os.path.join(os.path.dirname(__file__), 
                                 'dottable_config_tst.cfg')
+        self.cfg_arr_file = os.path.join(os.path.dirname(__file__), 
+                                         'neural_net_config_arrays_tst.cfg')
         self.config = NeuralNetConfig(cfg_file)
         
         complete_cfg_file = os.path.join(os.path.dirname(__file__), 
@@ -210,6 +214,35 @@ class NeuralNetConfigTest(unittest.TestCase):
         human_str = NeuralNetConfig.json_human_readable(json_str)
         print(human_str)
 
+
+    #------------------------------------
+    # test_arrays
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_arrays(self):
+        config = NeuralNetConfig(self.cfg_arr_file)
+        arr1 = config.getarray('Training', 'arr1', 'foo')
+        expected = ['1', "'foo'", '[10', 'bluebell]']
+        self.assertListEqual(arr1, expected)
+        
+        arr2 = config.getarray('Training', 'arr2', 'foo')
+        self.assertEqual(len(arr2),10)
+        expected = ['BANAG', 'BBFLG', 'BCMMG', 'BHPAG', 'BHTAG', 
+                    'BTSAC', 'BTSAS', 'CCROC', 'CCROS', 'CFPAG'
+                    ]
+        self.assertListEqual(arr2, expected)
+
+    #------------------------------------
+    # test_pickling
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_pickling(self):
+        
+        config = NeuralNetConfig(self.cfg_arr_file)
+        new_config = pickle.loads(pickle.dumps(config))
+        self.assertEqual(config, new_config)
 
 # -------------- Main -----------------
 if __name__ == "__main__":
