@@ -37,12 +37,31 @@ import pandas as pd
 import torch.nn as nn
 
 
+# Values are just for (some) clarity,
+# but they must be different from each other:
 class Datatype(Enum):
     tabular 	= '.csv'
     model   	= ['.pth', '.pkl']
     figure  	= '.pdf'
-    hparams     = '.json'
+    hparams     = 'hparams_json'
     tensorboard = 'tensorboard'
+    json        = '.json'
+    txt         = '.txt' 
+    untyped     = ''
+
+class JsonDumpableMixin:
+    '''
+    Mixin for derived classes that promise to implement
+    method json_dump(file_name). That method must
+    write proper json to the file.
+    
+    The derived classes must also implement json.load(fname),
+    which must return an instance of the derived class. 
+    '''
+    def json_dump(self, fname):
+        raise NotImplementedError("Subclass must implement this method")
+    def json_load(self, fname):
+        raise NotImplementedError("Subclass must implement this method")
 
 class ExperimentManager(dict):
     '''
@@ -65,11 +84,20 @@ TODO:
     Methods:
         o mv                  Move all files to a new root
         o save                Write a pytorch model, csv file, or figure
+        o read                Recover a previously saved item
+        o destroy             Remove a previously saved item
+        o abspath             Path to where an item is stored
+        o listdir             List all saved files of a given type
         
-        o add_csv            Create a CSV file writer
+        o add_hparams
+        o add_csv             Create a CSV file writer
         o close_csv           Close a CSV file writer
+        o col_names           Column names of tabular data (dataframes, series, dicts, etc.)
+        o tensorboard_path    Path to where the tensorboard info is written
         
+        o clear               Remove all saved items
         o close               Close all files
+
     
     Keys:
         o root_path
@@ -127,7 +155,7 @@ TODO:
 
             # Add passed-in info to what we know:
             self.update(initial_info)
-            
+
         # Check whether the given root already contains an
         # 'experiment.json' file:
         experiment_json_path = os.path.join(root_path, 'experiment.json')
@@ -136,18 +164,43 @@ TODO:
                 restored_dict_contents = json.load(fd)
                 self.update(restored_dict_contents)
 
-        self.models_path       = os.path.join(self.root, 'models')
-        self.figs_path         = os.path.join(self.root, 'figs')
-        self.csv_files_path    = os.path.join(self.root, 'csv_files')
-        self.tensorboard_path  = os.path.join(self.root, 'tensorboard')
-        self.hparams_path      = os.path.join(self.root, 'hparams')
-        
+        self.models_path        = os.path.join(self.root, 'models')
+        self.figs_path          = os.path.join(self.root, 'figs')
+        self.csv_files_path     = os.path.join(self.root, 'csv_files')
+        self.tensorboard_path   = os.path.join(self.root, 'tensorboard')
+        self.hparams_path       = os.path.join(self.root, 'hparams')
+        self.json_files_path    = os.path.join(self.root, 'json_files')
+        self.txt_files_path     = os.path.join(self.root, 'txt_files')
+        self.untyped_files_path = os.path.join(self.root, 'untyped_files')
+
         self._create_dir_if_not_exists(self.root)
         self._create_dir_if_not_exists(self.models_path)
         self._create_dir_if_not_exists(self.figs_path)
         self._create_dir_if_not_exists(self.csv_files_path)
         self._create_dir_if_not_exists(self.tensorboard_path)
         self._create_dir_if_not_exists(self.hparams_path)
+        self._create_dir_if_not_exists(self.json_files_path)
+        self._create_dir_if_not_exists(self.txt_files_path)        
+        self._create_dir_if_not_exists(self.untyped_files_path)
+
+        # Where to put which kind of Datatype or item Python type:
+        self.dir_dict = {
+            Datatype.tabular : self.csv_files_path,
+            Datatype.model   : self.models_path,
+            Datatype.figure  : self.figs_path,
+            Datatype.hparams : self.hparams_path,
+            Datatype.tensorboard : self.tensorboard_path,
+            dict             : self.csv_files_path,
+            list             : self.csv_files_path,
+            pd.Series        : self.csv_files_path,
+            pd.DataFrame     : self.csv_files_path,
+            np.ndarray       : self.csv_files_path,
+            JsonDumpableMixin: self.json_files_path,
+            Datatype.json    : self.json_files_path,
+            Datatype.txt     : self.txt_files_path,
+            Datatype.untyped : self.untyped_files_path
+        }
+        
         
         # External info
         self['root_path'] = self.root
@@ -160,7 +213,10 @@ TODO:
         self['_csv_files_path']         = self.csv_files_path
         self['_tensorboard_files_path'] = self.tensorboard_path
         self['_hparams_path']           = self.hparams_path
-        
+        self['_json_files_path']        = self.json_files_path
+        self['_txt_files_path']         = self.txt_files_path
+        self['_untyped_files_path']     = self.untyped_files_path
+
         # Create DictWriters for any already
         # existing csv files:
         self._open_csv_writers()
@@ -186,6 +242,7 @@ TODO:
             o pd.DataFrame
             o figures
             o NeuralNetConfig instances
+            o instances of classes that inherit from JsonDumpableMixin
             o strings are assumed to be tensorboards
 
             o this experiment itself
@@ -240,6 +297,11 @@ TODO:
                  experiment's already saved figures. Uses
                  plt.savefig with file format taken from extension.
                  If no extension provided in key, default is PDF
+
+            o JsonDumpableMixin instances:
+                 the extension '.json' is added to the key if needed.
+                 Then method json_dump() is called on item with the
+                 (possibly modified) key.  
                  
             o Tensorboard:
                  if key is a string, it is assumed to pertain to 
@@ -264,7 +326,6 @@ TODO:
         :raise ValueError for inconsistent values in arguments
         :raise TypeError for items with unrecognized type
         '''
-        
         if item is None and key is None:
             # Save this experiment itself.
             # Happens periodically after any
@@ -328,12 +389,38 @@ TODO:
             dst = os.path.join(self.figs_path, f"{key}.{file_format}")
             
             fig.savefig(dst, dpi=150, format=file_format)
+
+        elif isinstance(item, JsonDumpableMixin):
+            if Path(key).suffix != '.json':
+                fname = key + '.json'
+            else:
+                fname = key
+            dst =  os.path.join(self.json_files_path, fname)
+            item.json_dump(dst)
             
-        elif type(key) == str:
+        elif type(item) == str:
+            if Path(key).suffix != '.txt':
+                fname = key + '.txt'
+            else:
+                fname = key
+            dst = os.path.join(self.txt_files_path, fname)
+            with open(dst, 'w') as fd:
+                fd.write(item)
+
+        elif type(key) == str and item is None:
             # Assume this starts a tensorboard data repo.
             dst = os.path.join(self.tensorboard_path, key)
             # If not given a tensorboard SummaryReader, create one:
             os.makedirs(dst, exist_ok=True)
+
+        elif key is not None:
+            if Path(key).suffix != '.txt':
+                fname = key + '.txt'
+            else:
+                fname = key
+            dst = os.path.join(self.untyped_files_path, fname)
+            with open(dst, 'w') as fd:
+                fd.write(str(item))
 
         else:
             raise TypeError(f"Don't know how to save item of type {type(item)}")
@@ -372,7 +459,9 @@ TODO:
                 pass
             os.remove(path)
 
-        elif datatype in (Datatype.model, Datatype.figure, Datatype.hparams): 
+        elif datatype in (Datatype.model, Datatype.figure, 
+                          Datatype.hparams, Datatype.json,
+                          Datatype.txt): 
             os.remove(path)
 
         elif datatype == Datatype.tensorboard:
@@ -450,6 +539,13 @@ TODO:
            figure         pyplot Figure
            hparams        NeuralNetConfig
            tensorboard    Path to tensorboard information
+           json           instance of class with mixin JsonDumpableMixin
+           str            pure string, such as a README
+           
+        If the datatype is a class with a
+        JsonDumpableMixin mixin, then that class' json_load() 
+        classmethod is called with the file path, and the resulting 
+        instance is returned. 
 
         For reading skorch models requires the initialized_skorch_net
         kwarg. The saved information will be added to
@@ -526,6 +622,15 @@ TODO:
                     return NeuralNetConfig(path)
         elif datatype == Datatype.tensorboard:
             return path
+        
+        elif datatype == Datatype.txt:
+            with open(path, 'r') as fd:
+                txt = fd.read()
+                return txt
+
+        elif datatype == Datatype.json: 
+            new_inst = datatype.json_load(path)
+            return new_inst
 
     #------------------------------------
     # col_names
@@ -577,9 +682,11 @@ TODO:
         :raise TypeError for incorrect argument type
         :
         '''
+        
         if type(datatype) != Datatype:
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
-        
+
+        path = None
         dt_extension = datatype.value
 
         if datatype == Datatype.tabular:
@@ -612,8 +719,50 @@ TODO:
                 
         elif datatype == Datatype.tensorboard:
             path = os.path.join(self.tensorboard_path, f"{key}")
+            
+        elif datatype == Datatype.json:
+            if Path(key).suffix != '.json':
+                fname = key + '.json'
+            else:
+                fname = key
+            path = os.path.join(self.json_files_path, fname)
+            
+        elif datatype == Datatype.txt:
+            if Path(key).suffix != '.txt':
+                fname = key + '.txt'
+            else:
+                fname = key
+            path = os.path.join(self.txt_files_path, fname)
+            
+        elif datatype == Datatype.untyped:
+            if Path(key).suffix != '.txt':
+                fname = key + '.txt'
+            else:
+                fname = key
+            path = os.path.join(self.untyped_files_path, fname)
 
         return path
+
+
+    #------------------------------------
+    # listdir
+    #-------------------
+    
+    def listdir(self, datatype):
+        '''
+        Return a list all files of the given datatype
+        
+        :param datatype: type of files to return
+        :type datatype: Datatype
+        :return: list of files
+        :rtype: [str]
+        '''
+        
+        try:
+            storage_dir = self.dir_dict[datatype]
+        except KeyError:
+            raise TypeError(f"Datatype {datatype} not recognized as saved in experiment manager")
+        return os.listdir(storage_dir)
 
     #------------------------------------
     # close 
@@ -757,7 +906,7 @@ TODO:
                 # of .pth. Correct the extension:
                 net_path_p = net_path_p.parent.joinpath(net_path_p.stem + '.pkl')
                 
-                optimizer_path = net_path_p.parent.joinpath('opt.pkl')
+                optimizer_path = net_path_p.parent.joinpath('optimizer.pkl')
                 history_path   = net_path_p.parent.joinpath('history.json')
                 net.load_params(
                     f_params=net_path_p, 

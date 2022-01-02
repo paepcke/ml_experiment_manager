@@ -16,7 +16,8 @@ import zlib
 import skorch
 import torch
 
-from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread, Datatype
+from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread, Datatype, \
+    JsonDumpableMixin
 from experiment_manager.neural_net_config import NeuralNetConfig
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,6 +31,21 @@ TEST_ALL = True
 TODO:
    o test moving the experiment: ensure relative addressing!
 '''
+
+class Jsonable(JsonDumpableMixin):
+    def __init__(self):
+        self.my_dict = {'key1' : 'The goose',
+                        'key2' : 'is cooked'
+                       }
+    def json_dump(self, fname):
+        with open(fname, 'w') as fd:
+            json.dump(json.dumps(self.my_dict), fd)
+    @classmethod
+    def json_load(cls, fname):
+        my_dict = json.loads(json.load(fname))
+        obj = Jsonable()
+        obj.my_dict = my_dict
+        return obj 
 
 class ExperimentManagerTest(unittest.TestCase):
 
@@ -74,6 +90,16 @@ class ExperimentManagerTest(unittest.TestCase):
         os.makedirs(csvs_dir)
         self.make_csv_files(csvs_dir)
         
+        # Create a little json file:
+        json_dir   = os.path.join(self.prefab_exp_root,'json_files')
+        os.makedirs(json_dir)
+        self.make_json_file(json_dir)
+        
+        # Create some untyped files
+        untyped_dir = os.path.join(self.prefab_exp_root,'untyped_files')
+        os.makedirs(untyped_dir)
+        self.make_untyped_files(untyped_dir)
+
         # Create a tiny png file:
         figs_dir   = os.path.join(self.prefab_exp_root,'figs')
         os.makedirs(figs_dir)
@@ -210,7 +236,6 @@ class ExperimentManagerTest(unittest.TestCase):
         # Now treat the experiment
         writers_dict = exp.csv_writers
         self.assertEqual(len(writers_dict), 1)
-
 
     #------------------------------------
     # test_csv_header_first
@@ -357,7 +382,45 @@ class ExperimentManagerTest(unittest.TestCase):
         self.assertTrue((first_row == my_series).all())
 
         exp.close()
+
+    #------------------------------------
+    # test_saving_json
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_saving_json(self):
         
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+        my_jsonable = Jsonable()
+        
+        dst = exp.save('jsonable_test', my_jsonable)
+        # Read the raw json:
+        with open(dst, 'r') as fd:
+            jstr = json.loads(fd.read())
+            recovered_dict = json.loads(jstr)
+            self.assertDictEqual(recovered_dict, my_jsonable.my_dict)
+
+        exp.close()
+
+    #------------------------------------
+    # test_saving_txt
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_saving_txt(self):
+
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+        readme = "This is my README"
+        
+        exp.save('my_readme', readme)
+        with open(os.path.join(exp.txt_files_path, 'my_readme.txt'), 'r') as fd:
+            recovered = fd.read()
+            self.assertEqual(recovered, readme)
+
     #------------------------------------
     # test_mixed_csv_adding 
     #-------------------
@@ -510,6 +573,25 @@ class ExperimentManagerTest(unittest.TestCase):
         exp.destroy('my_tensorboard', Datatype.tensorboard)
         self.assertTrue(os.path.exists(exp.tensorboard_path))
         self.assertTrue(len(os.listdir(exp.tensorboard_path)) == 0)
+        
+        # Json:
+        jobj = Jsonable()
+        exp.save('my_json', jobj)
+        expected_path = os.path.join(exp.json_files_path, 'my_json.json')
+        self.assertTrue(os.path.exists(expected_path))
+        
+        exp.destroy('my_json', Datatype.json)
+        self.assertFalse(os.path.exists(expected_path))
+        
+        # Text:
+        readme = "My README."
+        exp.save('my_readme', readme)
+        expected_path = os.path.join(exp.txt_files_path, 'my_readme.txt')
+        self.assertTrue(os.path.exists(expected_path))
+        
+        exp.destroy('my_readme', Datatype.txt)
+        self.assertFalse(os.path.exists(expected_path))
+        
 
     #------------------------------------
     # test_root_movability
@@ -588,6 +670,18 @@ class ExperimentManagerTest(unittest.TestCase):
         _dst = exp.save('my_tensorboard')
         tb_path = exp.abspath('my_tensorboard', Datatype.tensorboard)
         self.assertEqual(tb_path, os.path.join(exp.tensorboard_path, 'my_tensorboard'))
+        
+        # Json:
+        self.assertEqual(exp.abspath('tiny_json', Datatype.json),
+                         os.path.join(exp.json_files_path, 'tiny_json.json'))
+        
+        # Untyped:
+        self.assertEqual(exp.abspath('one_text.txt', Datatype.untyped),
+                         os.path.join(exp.untyped_files_path, 'one_text.txt'))
+        self.assertEqual(exp.abspath('one_list', Datatype.untyped),
+                         os.path.join(exp.untyped_files_path, 'one_list.txt'))
+        self.assertEqual(exp.abspath('one_dict', Datatype.untyped),
+                         os.path.join(exp.untyped_files_path, 'one_dict.txt'))
 
     #------------------------------------
     # test_read
@@ -760,6 +854,36 @@ class ExperimentManagerTest(unittest.TestCase):
             
         self.csv1 = csv1
         self.csv2 = csv2
+
+    #------------------------------------
+    # make_json_file
+    #-------------------
+    
+    def make_json_file(self, dst_dir):
+        '''
+        Create a json file in the json directory:
+        
+        :param dst_dir: the json dir
+        :type dst_dir: src
+        '''
+        obj = Jsonable()
+        fname = os.path.join(dst_dir, 'tiny_json.json')
+        obj.json_dump(fname)
+
+    #------------------------------------
+    # make_untyped_files
+    #-------------------
+    
+    def make_untyped_files(self, dst_dir):
+        
+        with open(os.path.join(dst_dir, 'one_text.txt'), 'w') as fd:
+            fd.write("The goose is cooked")
+            
+        with open(os.path.join(dst_dir, 'one_dict.txt'), 'w') as fd:
+            fd.write(str({'foo' : 10, 'bar' : 20}))
+
+        with open(os.path.join(dst_dir, 'one_list.txt'), 'w') as fd:
+            fd.write(str([10, 20]))
 
     #------------------------------------
     # makeGrayPNG
