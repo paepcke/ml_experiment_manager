@@ -279,7 +279,7 @@ class ExperimentManagerTest(unittest.TestCase):
         saved_copy_path = os.path.join(exp.hparams_path, 'my_config.json')
         with open(saved_copy_path, 'r') as fd:
             json_str = fd.read()
-            other_config_obj = NeuralNetConfig.from_json(json_str)
+            other_config_obj = NeuralNetConfig.json_loads(json_str)
             # Couple of spot checks that the config instance
             # behaves as expected:
             self.assertEqual(other_config_obj['Training']['net_name'], 'resnet18')
@@ -580,7 +580,7 @@ class ExperimentManagerTest(unittest.TestCase):
         expected_path = os.path.join(exp.json_files_path, 'my_json.json')
         self.assertTrue(os.path.exists(expected_path))
         
-        exp.destroy('my_json', Datatype.json)
+        exp.destroy('my_json', Jsonable)
         self.assertFalse(os.path.exists(expected_path))
         
         # Text:
@@ -672,7 +672,7 @@ class ExperimentManagerTest(unittest.TestCase):
         self.assertEqual(tb_path, os.path.join(exp.tensorboard_path, 'my_tensorboard'))
         
         # Json:
-        self.assertEqual(exp.abspath('tiny_json', Datatype.json),
+        self.assertEqual(exp.abspath('tiny_json', Jsonable),
                          os.path.join(exp.json_files_path, 'tiny_json.json'))
         
         # Untyped:

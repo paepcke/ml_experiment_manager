@@ -45,7 +45,6 @@ class Datatype(Enum):
     figure  	= '.pdf'
     hparams     = 'hparams_json'
     tensorboard = 'tensorboard'
-    json        = '.json'
     txt         = '.txt' 
     untyped     = ''
 
@@ -100,7 +99,7 @@ TODO:
 
     
     Keys:
-        o root_path
+        o root
         o model_path
         o logits_path
         o probs_path
@@ -196,7 +195,6 @@ TODO:
             pd.DataFrame     : self.csv_files_path,
             np.ndarray       : self.csv_files_path,
             JsonDumpableMixin: self.json_files_path,
-            Datatype.json    : self.json_files_path,
             Datatype.txt     : self.txt_files_path,
             Datatype.untyped : self.untyped_files_path
         }
@@ -442,7 +440,7 @@ TODO:
         :param key:
         :type key:
         '''
-        if type(datatype) != Datatype:
+        if type(datatype) != Datatype and not issubclass(datatype, JsonDumpableMixin):
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
         
         path = self.abspath(key, datatype)
@@ -460,13 +458,15 @@ TODO:
             os.remove(path)
 
         elif datatype in (Datatype.model, Datatype.figure, 
-                          Datatype.hparams, Datatype.json,
-                          Datatype.txt): 
+                          Datatype.hparams, Datatype.txt): 
             os.remove(path)
-
+            
         elif datatype == Datatype.tensorboard:
             shutil.rmtree(self.tensorboard_path, ignore_errors=True)
             os.makedirs(self.tensorboard_path)
+
+        elif type(datatype) == type and issubclass(datatype, JsonDumpableMixin):
+            os.remove(path)
 
     #------------------------------------
     # add_hparams
@@ -572,16 +572,15 @@ TODO:
         :type uninitialized_net: {skorch.classifier.NeuralNet | torch.nn.Module
         :returns retrieved item
         :rtype {any}
+        :raise FileNotFoundError if item not found
         '''
         
-        if type(datatype) != Datatype:
+        if type(datatype) != Datatype and not issubclass(datatype, JsonDumpableMixin):
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
         
-        
-        
         path = self.abspath(key, datatype)
-        not_exists_err_msg = f"Cannot find file/dir corresponding to key '{key}' of type Datatype.{datatype.name}" 
-        if path is None:
+        not_exists_err_msg = f"Cannot find file/dir corresponding to key '{key}'" 
+        if path is None or not os.path.exists(path):
             raise FileNotFoundError(not_exists_err_msg)
         
         # For Datatype.model, the suffix will be
@@ -616,7 +615,7 @@ TODO:
             with open(path, 'r') as fd:
                 if Path(path).suffix == '.json':
                     json_str = fd.read()
-                    return NeuralNetConfig.from_json(json_str)
+                    return NeuralNetConfig.json_loads(json_str)
                 else:
                     # Assume it's a cfg file, and hope  for the best:
                     return NeuralNetConfig(path)
@@ -628,7 +627,7 @@ TODO:
                 txt = fd.read()
                 return txt
 
-        elif datatype == Datatype.json: 
+        elif issubclass(datatype, JsonDumpableMixin): 
             new_inst = datatype.json_load(path)
             return new_inst
 
@@ -683,11 +682,15 @@ TODO:
         :
         '''
         
-        if type(datatype) != Datatype:
+        if type(datatype) != Datatype and not issubclass(datatype, JsonDumpableMixin):
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
 
         path = None
-        dt_extension = datatype.value
+        try:
+            if issubclass(datatype, JsonDumpableMixin):
+                dt_extension = 'json'
+        except TypeError:
+            dt_extension = datatype.value
 
         if datatype == Datatype.tabular:
             path = os.path.join(self.csv_files_path, f"{key}{dt_extension}")
@@ -720,7 +723,7 @@ TODO:
         elif datatype == Datatype.tensorboard:
             path = os.path.join(self.tensorboard_path, f"{key}")
             
-        elif datatype == Datatype.json:
+        elif type(datatype) == type and issubclass(datatype, JsonDumpableMixin):
             if Path(key).suffix != '.json':
                 fname = key + '.json'
             else:
@@ -761,7 +764,14 @@ TODO:
         try:
             storage_dir = self.dir_dict[datatype]
         except KeyError:
-            raise TypeError(f"Datatype {datatype} not recognized as saved in experiment manager")
+            # Could be json-dumpable class:
+            try:
+                if issubclass(datatype, JsonDumpableMixin):
+                    storage_dir = self.dir_dict[JsonDumpableMixin]
+                else:
+                    raise TypeError(f"Datatype {datatype} not recognized as saved in experiment manager")
+            except TypeError:
+                raise TypeError(f"Datatype {datatype} not recognized as saved in experiment manager")
         return os.listdir(storage_dir)
 
     #------------------------------------
@@ -957,7 +967,7 @@ TODO:
             if Path(file).suffix == '.json':
                 with open(path, 'r') as fd:
                     config_str = fd.read()
-                    config = NeuralNetConfig.from_json(config_str)
+                    config = NeuralNetConfig.json_loads(config_str)
             else:
                 # Assumed to be a config file as per Python's
                 # configparser syntax:
@@ -1401,7 +1411,7 @@ TODO:
             # Is it a JSON str? Should have a better test!
             if config_info.startswith('{'):
                 # JSON String:
-                config = NeuralNetConfig.from_json(config_info)
+                config = NeuralNetConfig.json_loads(config_info)
             else: 
                 config = NeuralNetConfig(config_info)
         else:
