@@ -1142,6 +1142,7 @@ TODO:
             # we can flush() when writing to it:
             csv_writer.fd = fd
             csv_writer.writeheader()
+            fd.flush()
             self.csv_writers[fname] = csv_writer
         else:
             header = csv_writer.fieldnames
@@ -1178,7 +1179,9 @@ TODO:
             if index_col is None:
                 # Get to ignore the index (i.e. the row labels):
                 for row_dict in item.to_dict(orient='records'):
-                    csv_writer.writerow(row_dict)
+                    # Keys must be strings:
+                    row_dict_str_keys = {str(key) : val for key, val in row_dict.items()}
+                    csv_writer.writerow(row_dict_str_keys)
             else:
                 for row_dict in self._collapse_df_index_dict(item, index_col):
                     try:
@@ -1291,7 +1294,7 @@ TODO:
         if bad_shape:
             raise ValueError(f"Can only handle 1D or 2D, not {item}")
         
-        # Is item a likst, and we were asked to 
+        # Is item a list, and we were asked to 
         # check each row? 
         if type(item) == list and len(dims) == 2 and not trust_list_dim:
             # We know by now that list is 2D, check that
@@ -1300,7 +1303,8 @@ TODO:
             for row_num, row in enumerate(item):
                 if len(row) != len_1st_row:
                     raise ValueError(f"Inconsistent list row length in row {row_num}")
-        return header
+        stringified_header = [str(header_el) for header_el in header]
+        return stringified_header
 
     #------------------------------------
     # _list_shape
@@ -1367,14 +1371,14 @@ TODO:
             dataframe row
         :rtype [{str: any}]
         '''
-        # Now have
         df_nested_dict = df.to_dict(orient='index')
         # Now have:
         #  {'row1': {'foo': 1, 'bar': 2, 'fum': 3}, 'row2': {'foo': 4, ...
         df_dicts = []
         for row_label, row_rest_dict in df_nested_dict.items():
             df_dict = {index_col : row_label}
-            df_dict.update(row_rest_dict)
+            row_rest_dict_str_keys = {str(key) : val for key, val in row_rest_dict.items()}
+            df_dict.update(row_rest_dict_str_keys)
             df_dicts.append(df_dict)
         return df_dicts
 

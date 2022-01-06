@@ -264,6 +264,66 @@ class ExperimentManagerTest(unittest.TestCase):
             self.assertDictEqual(second_row_dict, expected)
 
     #------------------------------------
+    # test_adding_to_csv_index_ignored
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_adding_to_csv_index_ignored(self):
+        
+        exp = ExperimentManager(self.exp_root)
+        self.exp = exp
+        
+        df = pd.DataFrame([[1,2,3],[10,20,30]], index=[(3, 0.5, 0.01), (4, 0.6, 0.08)], columns=[100,200,300])
+        exp.save('df', df)
+        exp.close()
+        
+        row_dicts = self.read_csv_file('df')
+        expected  = [{'100': '1', '200': '2', '300': '3'}, {'100': '10', '200': '20', '300': '30'}]
+        for i, one_dict in enumerate(row_dicts):
+            self.assertDictEqual(one_dict, expected[i])
+
+        exp = ExperimentManager(self.exp_root)
+        exp.save('df', df)
+        row_dicts = self.read_csv_file('df')
+        expected  = [{'100': '1', '200': '2', '300': '3'}, {'100': '10', '200': '20', '300': '30'},
+                     {'100': '1', '200': '2', '300': '3'}, {'100': '10', '200': '20', '300': '30'}]
+        for i, one_dict in enumerate(row_dicts):
+            self.assertDictEqual(one_dict, expected[i])
+
+    #------------------------------------
+    # test_adding_to_csv_index_included
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_adding_to_csv_index_included(self):
+        
+        exp = ExperimentManager(self.exp_root)
+        self.exp = exp
+        
+        df = pd.DataFrame([[1,2,3],[10,20,30]], index=[(3, 0.5, 0.01), (4, 0.6, 0.08)], columns=[100,200,300])
+        exp.save('df', df, index_col='the_idx')
+        exp.close()
+        
+        row_dicts = self.read_csv_file('df')
+        expected  = [{'the_idx': '(3, 0.5, 0.01)', '100': '1', '200': '2', '300': '3'},
+                     {'the_idx': '(4, 0.6, 0.08)', '100': '10', '200': '20', '300': '30'}]
+        for i, one_dict in enumerate(row_dicts):
+            self.assertDictEqual(one_dict, expected[i])
+
+        exp = ExperimentManager(self.exp_root)
+        exp.save('df', df)
+        row_dicts = self.read_csv_file('df')
+        expected  = [{'the_idx': '(3, 0.5, 0.01)', '100': '1', '200': '2', '300': '3'},
+                     {'the_idx': '(4, 0.6, 0.08)', '100': '10', '200': '20', '300': '30'},
+                     {'the_idx': '(3, 0.5, 0.01)', '100': '1', '200': '2', '300': '3'},
+                     {'the_idx': '(4, 0.6, 0.08)', '100': '10', '200': '20', '300': '30'}
+                     ]
+
+        for i, one_dict in enumerate(row_dicts):
+            self.assertDictEqual(one_dict, expected[i])
+        
+
+    #------------------------------------
     # test_saving_hparams
     #-------------------
     
@@ -1025,6 +1085,26 @@ class ExperimentManagerTest(unittest.TestCase):
                 row = [int(el) for el in row]
                 rows.append(row)
         return rows
+
+    #------------------------------------
+    # read_csv_file
+    #-------------------
+    
+    def read_csv_file(self, key):
+        '''
+        Returns a dict from <exp_root>/csv_files/<key>.csv
+        Used to verify saving/reading
+        
+        :param key: file name without extension
+        :type key: str
+        :return content of csv file as dict
+        :rtype:  {str : Any}
+        '''
+        with open(os.path.join(self.exp.root, f'csv_files/{key}.csv')) as fd:
+            reader = csv.DictReader(fd)
+            row_dicts = list(reader)
+            return row_dicts 
+
 
     #------------------------------------
     # assert_dataframes_equal
