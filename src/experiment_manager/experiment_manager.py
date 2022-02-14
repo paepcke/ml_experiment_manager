@@ -48,6 +48,18 @@ class Datatype(Enum):
     txt         = '.txt' 
     untyped     = ''
 
+# Add an attribute with all the extensions
+# that are treated as special:
+
+_reserved_extensions = []
+for ext in [el.value for el in Datatype if el.value != '']:
+    if type(ext) == list:
+        _reserved_extensions.extend(ext)
+    else:
+        _reserved_extensions.append(ext)
+
+Datatype.reserved_extensions = _reserved_extensions
+
 class JsonDumpableMixin:
     '''
     Mixin for derived classes that promise to implement
@@ -230,7 +242,7 @@ TODO:
     # save 
     #-------------------
     
-    def save(self, key=None, item=None, index_col=None, header=None):
+    def save(self, key=None, item=None, index_col=None, header=None, **kwargs):
         '''
         Save any of:
             o pytorch model
@@ -293,7 +305,7 @@ TODO:
                  if key exists, the name is extended
                  with '_<n>' until it is unique among this
                  experiment's already saved figures. Uses
-                 plt.savefig with file format taken from extension.
+                 plt.savefig with file img_format taken from extension.
                  If no extension provided in key, default is PDF
 
             o JsonDumpableMixin instances:
@@ -306,6 +318,16 @@ TODO:
                  tensorboard management. A subdirectory of name <key>
                  is created below the exp root. Argument <item> is
                  ignored 
+
+        Additional keywords are passed to the mechanism that saves.
+        Currently available when saving:
+        
+           Figure
+               o img_format       which img_format to save in: 
+                              'png', 'pdf', 'ps', 'eps', or 'svg'
+               o transparent  whether to suppress the white background,
+                              making the background transparent. Good
+                              for PowerPoint or Web pages. Default: False
 
         :param key: key for retrieving the file path and DictWriter
         :type key: str
@@ -345,13 +367,16 @@ TODO:
                 fpath = self.abspath(key, Datatype.tabular)
                 raise ValueError(f"A header can only be provided if csv file does not exist yet ({fpath})")
 
-        # Key is is used as the key to the 
+        # Key is used as the key to the 
         # csv file in self.csv_writers, and as the file
         # name inside of self.csv_files_path. So, clean
         # up what's given to us: remove parent dirs and
-        # the extension:
+        # the extension if the extension is one we'll be
+        # adding: 
         try:
-            key = Path(key).stem
+            extension = Path(key).suffix
+            if extension in Datatype.reserved_extensions:
+                key = Path(key).stem
         except Exception as _e:
             raise ValueError(f"First argument must be a data access key, not {key}")
 
@@ -381,12 +406,30 @@ TODO:
 
         elif type(item) == plt.Figure:
             fig = item
-            fname_ext   = Path(key).suffix
-            # Remove the leading period if extension provided:
-            file_format = 'pdf' if len(fname_ext) == 0 else fname_ext[1:] 
-            dst = os.path.join(self.figs_path, f"{key}.{file_format}")
+            # Remove image extension from key if present:
+            ext = Path(key).suffix
+            if ext in ['.png', '.pdf', '.ps', '.eps', '.svg']:
+                key = Path(key).stem 
+            try:
+                # Did caller provide an image file img_format?
+                img_format = kwargs['format']
+                # Yes, they did:
+                # Be nice: strip leading dot if caller added it:
+                if img_format.startswith('.'):
+                    img_format = img_format[1:]
+                if img_format not in ['png', 'pdf', 'ps', 'eps', 'svg']:
+                    raise ValueError(f"Image file img_format must be 'png', 'pdf', 'ps', 'eps', or 'svg', not {img_format}")
+            except KeyError:
+                # No image file img_format was provided:
+                # If stem provides the info, use it,
+                # else: default
+                if ext in ['.png', '.pdf', '.ps', '.eps', '.svg']:
+                    img_format = ext[1:]
+                else: 
+                    img_format = 'pdf'
+            dst = os.path.join(self.figs_path, f"{key}.{img_format}")
             
-            fig.savefig(dst, dpi=150, format=file_format)
+            fig.savefig(dst, dpi=150, **kwargs)
 
         elif isinstance(item, JsonDumpableMixin):
             if Path(key).suffix != '.json':
