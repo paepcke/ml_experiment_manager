@@ -66,7 +66,7 @@ class JsonDumpableMixin:
     method json_dump(file_name). That method must
     write proper json to the file.
     
-    The derived classes must also implement json.load(fname),
+    The derived classes must also implement json_load(fname),
     which must return an instance of the derived class. 
     '''
     def json_dump(self, fname):
@@ -127,7 +127,7 @@ TODO:
     # Constructor 
     #-------------------
 
-    def __init__(self, root_path, initial_info=None):
+    def __init__(self, root_path, initial_info=None, freeze_state_file=False):
         '''
         If the given directory already contains an experiment.json
         file, the resulting instance will be contain all
@@ -138,12 +138,22 @@ TODO:
         used to set desired initial key-value pairs in the
         old or new instance.
         
+        The freeze_state_file should be used during multiprocessing
+        operations, where multiple copies of the experiment manager
+        are created on the same file root. In that case, we assume
+        that the experiment.json file with particulars of this experiment
+        has already been written, and it won't be overwritten. Without
+        this lock, one process might be writing that file, while another
+        is reading it.
+        
         :param root_path: path to root directory of the
             experiment to be created or loaded
         :type root_path: str
         :param initial_info: optionally, a dict with already
             known facts about the experiment.
         :type initial_info: {str : any}
+        :param freeze_state_file: prevent overwriting the experiment.json file
+        :type freeze_state_file: bool
         '''
 
         if not os.path.exists(root_path):
@@ -153,6 +163,7 @@ TODO:
 
         self.root              = root_path
         self.auto_save_thread  = None
+        self.freeze_state_file = freeze_state_file
         
         # No csv writers yet; will be a dict
         # of CSV writer instances keyed by file
@@ -1189,19 +1200,6 @@ TODO:
             self.csv_writers[fname] = csv_writer
         else:
             header = csv_writer.fieldnames
-            # If item is df, we need to determine
-            # whether the index should be included
-            # in a column:
-            if type(item) == pd.DataFrame:
-                col_names = item.columns
-                # If we have one more fld name than
-                # the number of cols, then assume that
-                # the first fld name is for the index column:
-                if len(header) == len(col_names) + 1:
-                    index_col = header[0]
-                else:
-                    # Used to be "index_col = None"
-                    index_col = index_col
 
         # Now the DictWriter exists; write the data.
         # Method for writing may vary with data type.
@@ -1218,25 +1216,8 @@ TODO:
             num_dims = len(item.shape)
             if num_dims > 2:
                 raise ValueError(f"For dataframes, can only handle 1D or 2D, not {item}")
-            
-            if index_col is None:
-                # Get to ignore the index (i.e. the row labels):
-                for row_dict in item.to_dict(orient='records'):
-                    # Keys must be strings:
-                    row_dict_str_keys = {str(key) : val for key, val in row_dict.items()}
-                    csv_writer.writerow(row_dict_str_keys)
-            else:
-                for row_dict in self._collapse_df_index_dict(item, index_col):
-                    try:
-                        csv_writer.writerow(row_dict)
-                    except ValueError as e:
-                        # Typical cause of a value error is 
-                        # that csv_writer was closed. Add debug
-                        # info and re-raise:
-                        msg = "While writing csv record: "
-                        if type(csv_writer) == csv.DictWriter:
-                            msg += f"fname is {csv_writer.fd.name}; "
-                        raise ValueError(f"{msg} {repr(e)}") from e
+
+            item.to_csv(dst, index_label=index_col)
                     
         # Numpy array or Python list:
         elif type(item) in(np.ndarray, list):
@@ -1475,8 +1456,16 @@ TODO:
     def _save_self(self):
         '''
         Write json of info about this experiment
-        to self.root/experiment.json
+        to self.root/experiment.json.
+        
+        If self.freeze_state_file is True, writing
+        to that file is not legal. This lock is needed during 
+        multiprocessing operations with multiple copies
+        of ExperimentManager with the same file root.
         '''
+        
+        if self.freeze_state_file:
+            return
 
         # If config facility is being used, turn
         # the NeuralNetConfig instance to json:
