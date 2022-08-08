@@ -34,7 +34,6 @@ from experiment_manager.neural_net_config import NeuralNetConfig, ConfigError
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pyarrow
 import torch.nn as nn
 
 
@@ -655,7 +654,14 @@ TODO:
                 raise FileNotFoundError(not_exists_err_msg)
 
         if datatype == Datatype.tabular:
-            the_df_or_series = pd.read_csv(path, engine='pyarrow')
+            try:
+                the_df_or_series = pd.read_csv(path, engine='pyarrow')
+            except ValueError:
+                # As of pyarrow version 9.0 with pandas 1.4.3,
+                # the pyarrow engine does not handle multi-index
+                # csv files; so go the slow way:
+                the_df_or_series = pd.read_csv(path)
+                
             # If the caller identified a column as
             # intended for the index, move that
             # col into the index. Note that 
@@ -969,6 +975,13 @@ TODO:
         '''
         
         if index_col is None:
+            # Drop empty leading columns. They are an
+            # artifact of saving a df without specifying
+            # an index_col. The empty is a duplicate of
+            # the retrieved index:
+            first_col = df.columns[0]
+            if first_col == '' and (df[first_col] == df.index).all():
+                df.drop('', axis=1, inplace=True)
             return df
         
         # Convenience:
@@ -980,8 +993,8 @@ TODO:
                 # A matching column is found: 
                 df.set_index(index_col, inplace=True)
             else:
-                if cols[0] == 'Unnamed: 0':
-                    df.set_index('Unnamed: 0', inplace=True)
+                if cols[0] in ['Unnamed: 0', '']:
+                    df.set_index(cols[0], inplace=True)
             df.index.rename(index_col, inplace=True)
             return df
 

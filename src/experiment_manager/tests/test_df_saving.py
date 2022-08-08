@@ -49,16 +49,16 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def testSimpleIdxNoIdxColNoIdxName(self):
         
-        df = self.make_df(IdxType.simple)
+        df = self.make_spectro_df(IdxType.simple)
         self.exp.save('simple_idx', df)
         df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
         expected = \
-            ('   Unnamed: 0  Col1  Col2  Col3\n'
-            '0           0     1     2     3\n'
-            '1           1     4     5     6\n'
-            '2           2     7     8     9\n'
-            '3           3    10    11    12')
-        
+            ('   Col1  Col2  Col3\n'
+            '0     1     2     3\n'
+            '1     4     5     6\n'
+            '2     7     8     9\n'
+            '3    10    11    12')
+
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
 
     #------------------------------------
@@ -68,7 +68,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def testSimpleIdxNoIdxColWithIdxName(self):
         
-        df = self.make_df(IdxType.simple)
+        df = self.make_spectro_df(IdxType.simple)
         df.index.name = 'my_index'
         self.exp.save('simple_idx', df)
         df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
@@ -81,7 +81,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
          
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
 
-        df = self.make_df(IdxType.multi)
+        df = self.make_spectro_df(IdxType.multi)
         df.index.rename(('color', 'number'), inplace=True)
         self.exp.save('multi_idx', df)
         df_retrieved = self.exp.read('multi_idx', Datatype.tabular, index_col=('color', 'number'))
@@ -102,7 +102,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def testSimpleIdxWithIdxCol(self):
         
-        df = self.make_df(IdxType.simple)
+        df = self.make_spectro_df(IdxType.simple)
         self.exp.save('simple_idx', df)
         df_retrieved = self.exp.read('simple_idx', Datatype.tabular, index_col='my_idx')
         expected = \
@@ -121,7 +121,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_multi_index_no_index_col(self):
-        df = self.make_df(IdxType.multi)
+        df = self.make_spectro_df(IdxType.multi)
         self.exp.save('multi_idx', df)
         df_retrieved = self.exp.read('multi_idx', Datatype.tabular)
 
@@ -140,7 +140,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_multi_index_with_index_col(self):
-        df = self.make_df(IdxType.multi)
+        df = self.make_spectro_df(IdxType.multi)
         self.exp.save('multi_idx', df)
         df_retrieved = self.exp.read('multi_idx', Datatype.tabular, index_col=('color', 'name'))
 
@@ -162,16 +162,16 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     
     def clear_experiment(self):
         try:
-            os.rmdir(ExpManagerDataFrameTester.exp_root)
+            shutil.rmtree(ExpManagerDataFrameTester.exp_root)
         except Exception:
             pass
         self.exp = ExperimentManager(self.exp_root)
 
     #------------------------------------
-    # make_df
+    # make_spectro_df
     #-------------------
     
-    def make_df(self, idx_type, idx_col_nm=None):
+    def make_spectro_df(self, idx_type, idx_col_nm=None):
         
         df = pd.DataFrame([[1,2,3],
                            [4,5,6],
