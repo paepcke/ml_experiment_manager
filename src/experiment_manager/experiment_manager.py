@@ -34,6 +34,7 @@ from experiment_manager.neural_net_config import NeuralNetConfig, ConfigError
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyarrow
 import torch.nn as nn
 
 
@@ -580,7 +581,7 @@ TODO:
     # read
     #-----
     
-    def read(self, key, datatype, uninitialized_net=None):
+    def read(self, key, datatype, index_col=None, uninitialized_net=None):
         '''
         Given the key used in a previous save()
         call, and the datatype (Datatype.tabular, 
@@ -621,6 +622,10 @@ TODO:
             a table (i.e. csv file), a figure (.pdf/.png, etc),
             or one of the other Datatype enums
         :type datatype: Datatype
+        :param index_col: for retrieving dataframes: if provided, 
+            must be the name of an existing column in the csv file.
+            The column will be moved into the index.
+        :type index_col: {None | str}
         :param uninitialized_net: initialized neural net; only
             needed for models 
         :type uninitialized_net: {skorch.classifier.NeuralNet | torch.nn.Module
@@ -650,7 +655,15 @@ TODO:
                 raise FileNotFoundError(not_exists_err_msg)
 
         if datatype == Datatype.tabular:
-            return pd.read_csv(path)
+            the_df_or_series = pd.read_csv(path, engine='pyarrow')
+            # If the caller identified a column as
+            # intended for the index, move that
+            # col into the index. Note that 
+            
+            if type(the_df_or_series) == pd.DataFrame:
+                the_df_or_series = self._handle_retrieved_df_index(index_col, the_df_or_series)
+                 
+            return the_df_or_series
         
         elif datatype == Datatype.model:
             # Could be a pytorch model (.pth) or
@@ -920,6 +933,115 @@ TODO:
 
 
     # --------------- Private Methods --------------------
+
+    #------------------------------------
+    # _handle_retrieved_df_index
+    #-------------------
+    
+    def _handle_retrieved_df_index(self, index_col, df):
+        '''
+        Given a df that was just read from a .csv file, 
+        set the df's index to something reasonable. Possibilities:
+        
+           o index_col is None: caller does not want us to change 
+             the index from the default range index.
+           o index_col is the name of a single existing column:
+             turn that column into the df's index (removing it from
+             the columns)
+           o index_col is a list of existing column names: turn all
+             those columns into a MultiIndex.
+           o index_col is a list of names that are not column names:
+             Check whether the df's columns have leading columns 
+             called "Unnamed: 0", "Unnamed: 1", etc. Turn those into
+             a MultiIndex, and change the level names to the ones
+             specified in the index_col parm.
+        
+        Appropriate error checks throughout
+        
+        :param index_col: single, or multiple column names to turn
+            into (Multi)Index for the df. None prevents any index
+            manipulation
+        :type index_col: {None | list | str | int | float}
+        :param df: dataframe read from csv file
+        :type df: pd.DataFrame
+        :return: modified dataframe
+        :rtype: pd.DataFrame
+        '''
+        
+        if index_col is None:
+            return df
+        
+        # Convenience:
+        cols = df.columns
+        
+        # Simplest case: caller named one existing col to be the index:
+        if type(index_col) not in (list, tuple):
+            if index_col in cols:
+                # A matching column is found: 
+                df.set_index(index_col, inplace=True)
+            else:
+                if cols[0] == 'Unnamed: 0':
+                    df.set_index('Unnamed: 0', inplace=True)
+            df.index.rename(index_col, inplace=True)
+            return df
+
+        # Caller gave multiple column names for a multi-index.
+        # Two possibilities: the columns exist, in which case
+        # we make them into a multi-index. If they don't, there
+        # could still be leading cols called "Unnamed: <n>", which
+        # were created when the original df was written:
+        if set(cols).issuperset(set(index_col)):
+            # Need list() in case caller passed a tuple
+            # of column names:
+            df.set_index(list(index_col), inplace=True)
+            return df
+        # Index column name(s) specified, but not in cols:
+        # Check whether saved df had index or multiindex 
+        # saved explicitly. In that case, initial col names
+        # will be of the form 'Unnamed: 0', Unnamed: 1', etc.
+        num_unnamed_cols = self._get_unnamed_index_cols(df.columns)
+        if num_unnamed_cols == 0:
+            raise ValueError(f"Requested cols {index_col} as multi-index, but not all are present as columns")
+        # Must have no more requested index col names than 
+        # we have Unnamed cols:
+        if len(index_col) != num_unnamed_cols:
+            raise ValueError(f"Given multi-name index_col '{index_col}', but archived df has {num_unnamed_cols} unnamed cols")
+        # Turn the Unnamed cols into a multiindex:
+        df.set_index(list(cols[:num_unnamed_cols]), inplace=True)
+        # And given the index levels the requested names
+        df.index.rename(index_col, inplace=True)
+        return df
+
+    #------------------------------------
+    # _get_unnamed_index_cols
+    #-------------------
+    
+    def _get_unnamed_index_cols(self, cols):
+        '''
+        Given a list of column names, check how many
+        (if any) of the initial column names are of 
+        the form 'Unnamed: <n>' where n is an int. 
+        
+        Such columns are created from the index or 
+        multi-index of a df when it is written to csv,
+        and then read back. The csv contains leading 
+        commas in that case
+
+        :param cols: list of df columns
+        :type cols: list
+        :return number of leading column names of the form
+            'Unnamed: <n>'. 
+        :rtype: int
+        '''
+        unnamed_col_pat = re.compile(r'Unnamed: [\d]')
+        idx_cols = 0
+        for col_nm in cols:
+            if unnamed_col_pat.match(col_nm) is not None:
+                idx_cols += 1
+            else:
+                break
+        return idx_cols
+    
 
     #------------------------------------
     # _load_model
@@ -1211,12 +1333,12 @@ TODO:
         elif type(item) == list:
             item = np.array(item)
 
-        # If given a dataframe, write each row:
+        # If given a dataframe, use built-in to_csv():
         if type(item) == pd.DataFrame:
             num_dims = len(item.shape)
             if num_dims > 2:
                 raise ValueError(f"For dataframes, can only handle 1D or 2D, not {item}")
-
+            
             item.to_csv(dst, index_label=index_col)
                     
         # Numpy array or Python list:
