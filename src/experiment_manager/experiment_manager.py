@@ -121,6 +121,8 @@ TODO:
     
     '''
 
+    SUPPORTED_INDEXERS = ['Index', 'Int64Index', 'RangeIndex', 'MultiIndex', 'Float64Index']
+    
     #------------------------------------
     # Constructor 
     #-------------------
@@ -675,10 +677,17 @@ TODO:
                                                    index_col=idx_info['index_col'],
                                                    header=idx_info['header']
                                                    )
-                    the_df_or_series.index.name = idx_info['row_idx_name']
+                    # Fix the dtypes of the two indexers:
+                    cur_row_idx = the_df_or_series.index
+                    the_df_or_series.index = self._adjust_index(cur_row_idx,
+                                                                idx_info,
+                                                                axis='index')
                     if idx_info['type'] == 'DataFrame':
                         # There is also a column index:
-                        the_df_or_series.columns.name = idx_info['col_idx_name']
+                        cur_col_idx = the_df_or_series.columns
+                        the_df_or_series.columns = self._adjust_index(cur_col_idx, 
+                                                                      idx_info,
+                                                                      axis='columns')
                 return the_df_or_series 
             except FileNotFoundError:
                 idx_info = None
@@ -1428,24 +1437,32 @@ TODO:
         indexer. Enter the respective information in the passed-in
         dict idx_info, and return that updated dict.
         
-        Extracted and entered in idx_info are (depending on the idx_type):
+        Extracted and entered in idx_info are (depending on the idx_kind):
             
             o for row indexers:
-                 * row_idx_type: set to 'Index', 'RangeIndex' or 'MultiIndex'
+                 * row_idx_kind: set to 'Index', 'Int64Index', 'RangeIndex',
+                   or 'MultiIndex'. See ExperimentManager.SUPPORTED_INDEXERS
+                   for authoritative list.
                  * information to pass in index_col arg when using 
                    pd.read_csv() later
                  * row_idx_name: the name property of the row indexer
+                 * row_dtype: the data type of the row indexer as revealed
+                     by indexer.dtype.name
             o for column indexers: 
-                 * col_idx_type: set to 'Index', 'RangeIndex' or 'MultiIndex'
+                 * col_idx_kind: set to 'Index', 'RangeIndex' ...
+                   See ExperimentManager.SUPPORTED_INDEXERS
+                   for authoritative list.
                  * information to pass in header arg when using 
                    pd.read_csv() later
                  * col_idx_name: the name property of the column indexer
+                 * col_dtype: the data type of the column indexer as revealed
+                     by indexer.dtype.name
 
         The index_col or header info is determined list this:
         
-            o For simple Index: the list [0], which means the 0th column
+            o For simple Index, Int64Index, and RangeIndex: the 
+              list [0], which means the 0th column
               will be the index in the saved csv
-            o For RangeIndex: a list of start, stop, step of the range
             o For MultiIndex: list of columns for each level. I.e., for an index:
             
                 outer1
@@ -1457,13 +1474,14 @@ TODO:
               the list [0,1] would be for index_col or header when retrieving
               csv via pd.read_csv() later
               
-        Only pd.Index, pd.RangeIndex, and pd. MultiIndex are handled
+        Only pd.Index, Int64Index, pd.RangeIndex, and pd. MultiIndex are handled.
+        See ExperimentManager.SUPPORTED_INDEXERS for authoritative list.
         
         The axis kwarg may be 0 or 'index' if indexer is a row indexer,
         or 1 or 'columns' if the indexer is a column indexer.
 
         :param indexer: row or column indexer
-        :type indexer: {pd.Index | pd.RangeIndex | pd. MultiIndex}
+        :type indexer: {pd.Index | pd.Int64Index, pd.RangeIndex | pd. MultiIndex}
         :param idx_info: dict where information is to be added
         :type idx_info: dict
         :param axis: whether indexer is a row or a column indexer
@@ -1473,35 +1491,33 @@ TODO:
         :raises TypeError if indexer type is unrecognized.
         '''
 
-        idx_type = type(indexer).__name__
-        # 'Index', 'RangeIndex', or 'MultiIndex':
-        if idx_type not in ['Index', 'RangeIndex', 'MultiIndex']:
-            raise TypeError(f"Can only save indexer types Index, RangeIndex, and MultiIndex, not {idx_type}")
+        idx_kind = type(indexer).__name__
+        # 'Index', 'RangeIndex', 'MultiIndex', etc.:
+        if idx_kind not in self.SUPPORTED_INDEXERS:
+            raise TypeError(f"Can only save indexer types {self.SUPPORTED_INDEXERS}, not {idx_kind}")
         
         if axis in (0, 'index'):
-            idx_info['row_idx_type'] = idx_type
+            idx_info['row_idx_kind'] = idx_kind
             # Row labels as needed for the index_col argument
             # of pd.read_csv() later:
-            if idx_type == 'Index':
+            if idx_kind in ['Index', 'Int64Index', 'Float64Index', 'RangeIndex']:
                 idx_info['index_col'] = [0]
-            elif idx_type == 'RangeIndex':
-                idx_info['index_col'] = [0]
-            elif idx_type == 'MultiIndex':
+            elif idx_kind == 'MultiIndex':
                 idx_info['index_col'] = np.arange(indexer.nlevels).tolist()
             idx_info['row_idx_name'] = indexer.name
+            idx_info['row_dtype'] = indexer.dtype.name
 
         elif axis in (1, 'columns'):
-            idx_info['col_idx_type'] = idx_type
+            idx_info['col_idx_kind'] = idx_kind
             # Row labels as needed for the index_col argument
             # of pd.read_csv() later:
-            if idx_type == 'Index':
+            if idx_kind in ['Index', 'Int64Index', 'Float64Index', 'RangeIndex']:
                 idx_info['header'] = [0]
-            elif idx_type == 'RangeIndex':
-                idx_info['header'] = [0]
-            elif idx_type == 'MultiIndex':
+            elif idx_kind == 'MultiIndex':
                 idx_info['header'] = np.arange(indexer.nlevels).tolist()
             idx_info['col_idx_name'] = indexer.name
-
+            idx_info['col_dtype'] = indexer.dtype.name
+            
         return idx_info
 
     #------------------------------------
@@ -1854,6 +1870,69 @@ TODO:
         
         return f_els
 
+    #------------------------------------
+    # _adjust_index
+    #-------------------
+    
+    def _adjust_index(self, cur_idx, idx_info, axis=0):
+        '''
+        Given an indexer, and information about a target
+        index type, and dtype, convert the given indexer 
+        cur_idx the target if possible, and return the new indexer.
+        Both, the index type and dtypes are converted.  
+        
+        The following indexers currently result in a
+        conversion: RangeIndex, Int64Index, and Float64Index.
+        Other indexers are returned unchanged.
+        
+        The idx_info is expected to be a dict with at least
+        the following entries, depending on the axis:
+        
+        For axis == { 0 | 'index'}:
+            'row_idx_kind' : {'RangeIndex' | 'Int64Index' | ...}
+            'row_dtype'    : dtype of the target index
+            'row_idx_name  : name of the row indexer
+            
+        For axis == { 1 | 'columns'}:
+            'col_idx_kind' : {'RangeIndex' | 'Int64Index' | ...}
+            'col_dtype'    : dtype of the target index
+            'col_idx_name  : name of the row indexer
+
+        :param cur_idx: indexer whose type is to be converted
+        :type cur_idx: pd.Indexer subtype
+        :param idx_info: info on destination indexer
+        :type idx_info: {str : str}
+        :param axis: whether row indexer or column indexer
+        :type axis: { { 0 | 'index'} | { 1 | 'columns'} 
+        :return: a pandas indexer
+        :rtype: any indexer type
+        '''
+
+        if axis in (0, 'index'):
+            dst_idx_kind  = idx_info['row_idx_kind']
+            dst_idx_dtype = idx_info['row_dtype']
+            dst_idx_name  = idx_info['row_idx_name']
+        elif axis in (1, 'columns'):
+            dst_idx_kind  = idx_info['col_idx_kind']
+            dst_idx_dtype = idx_info['col_dtype']
+            dst_idx_name  = idx_info['col_idx_name']
+
+        if dst_idx_kind == 'RangeIndex':
+            new_idx = pd.RangeIndex(start=cur_idx.min(), 
+                                    stop=cur_idx.max()+1, 
+                                    step=1)
+        elif dst_idx_kind == 'Int64Index':
+            new_idx = cur_idx.astype(dst_idx_dtype)
+        elif dst_idx_kind == 'Float64Index':
+            new_idx = cur_idx.astype(dst_idx_dtype)
+        else:
+            return cur_idx
+
+        new_idx.astype(dst_idx_dtype)
+        new_idx.name = dst_idx_name
+            
+        return new_idx
+        
 
     #------------------------------------
     # _unique_fname 

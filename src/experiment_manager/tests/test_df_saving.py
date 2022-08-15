@@ -85,6 +85,112 @@ class ExpManagerDataFrameTester(unittest.TestCase):
         self.assertTrue((df == df_retrieved).all().all())
 
     #------------------------------------
+    # test_simple_with_integer_col_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_simple_with_integer_col_index(self):
+        
+        df = self.make_simple_df(IdxType.simple)
+        df.columns = [10,20,30]
+        self.exp.save('simple_idx', df)
+        df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('   10  20  30\n'
+             '0   1   2   3\n'
+             '1   4   5   6\n'
+             '2   7   8   9\n'
+             '3  10  11  12')
+         
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    #------------------------------------
+    # test_simple_with_float_col_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_simple_with_float_col_index(self):
+        
+        df = self.make_simple_df(IdxType.simple)
+        df.columns = [10.0,20.0,30.0]
+        self.exp.save('simple_idx', df)
+        df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('   10.0  20.0  30.0\n'
+             '0     1     2     3\n'
+             '1     4     5     6\n'
+             '2     7     8     9\n'
+             '3    10    11    12')
+
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    #------------------------------------
+    # test_simple_with_int_row_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_simple_with_int_row_index(self):
+        
+        df = self.make_simple_df(IdxType.simple)
+        df.index = [10,20,30,40]
+        self.exp.save('simple_idx', df)
+        df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('    Col1  Col2  Col3\n'
+             '10     1     2     3\n'
+             '20     4     5     6\n'
+             '30     7     8     9\n'
+             '40    10    11    12')
+
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    #------------------------------------
+    # test_simple_with_float_row_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_simple_with_float_row_index(self):
+        
+        df = self.make_simple_df(IdxType.simple)
+        df.index = [10.0,20.0,30.0,40.0]
+        self.exp.save('simple_idx', df)
+        df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('      Col1  Col2  Col3\n'
+             '10.0     1     2     3\n'
+             '20.0     4     5     6\n'
+             '30.0     7     8     9\n'
+             '40.0    10    11    12') 
+
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    #------------------------------------
+    # test_simple_with_txt_row_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_simple_with_txt_row_index(self):
+        
+        df = self.make_simple_df(IdxType.simple)
+        df.index = ['row0', 'row1', 'row2', 'row3'] 
+        self.exp.save('simple_idx', df)
+        df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('      Col1  Col2  Col3\n'
+             'row0     1     2     3\n'
+             'row1     4     5     6\n'
+             'row2     7     8     9\n'
+             'row3    10    11    12')         
+             
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    
+    #------------------------------------
     # test_multi_index_no_index_col
     #-------------------
     
