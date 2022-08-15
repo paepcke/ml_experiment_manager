@@ -63,11 +63,9 @@ Datatype.reserved_extensions = _reserved_extensions
 class JsonDumpableMixin:
     '''
     Mixin for derived classes that promise to implement
-    method json_dump(file_name). That method must
-    write proper json to the file.
-    
-    The derived classes must also implement json_load(fname),
-    which must return an instance of the derived class. 
+    methods json_dump(file_name) and json_load(file_name). 
+    These methods must read and read proper JSON 
+    to files.
     '''
     def json_dump(self, fname):
         raise NotImplementedError("Subclass must implement this method")
@@ -253,7 +251,7 @@ TODO:
     # save 
     #-------------------
     
-    def save(self, key=None, item=None, index_col=None, header=None, **kwargs):
+    def save(self, key=None, item=None, header=None, **kwargs):
         '''
         Save any of:
             o pytorch model
@@ -280,11 +278,6 @@ TODO:
             'prediction_numbers'
             'measurement_results'
             
-        The index_col is only relevant when saving
-        dataframes. If provided, the df index (i.e. the row labels)
-        are saved in the csv file with its own column, named
-        index_col. Else the index is ignored.
-        
         The header argument may be used for tabular data ahead of
         saving any data. Useful if data will be saved as Python
         lists or np arrays. In those cases the data themselves do
@@ -344,9 +337,6 @@ TODO:
         :type key: str
         :param item: the data to save
         :type item: {dict | list | pd.Series | pd.DataFrame | torch.nn.Module | plt.Figure}
-        :param index_col: for dataframes only: col name for
-            the index; if None, index is ignored
-        :type index_col: {None | str}
         :param header: use given list as a header row; used only
             without also providing item, and before a first save
             of data with the given key
@@ -397,8 +387,11 @@ TODO:
             optimizer_path = os.path.join(self.models_path, 'opt.pkl')
             history_path   = os.path.join(self.models_path, 'history.json')
             model.save_params(dst, f_optimizer=optimizer_path, f_history=history_path)
+            
+        if type(item) in (pd.DataFrame, pd.Series):
+            dst = self._save_records(item, key)
 
-        if isinstance(item, nn.Module):
+        elif isinstance(item, nn.Module):
             model = item
             # A pytorch model
             dst = os.path.join(self.models_path, f"{key}.pth")
@@ -406,10 +399,11 @@ TODO:
             #    dst = self._unique_fname(self.models_path, key)
             torch.save(model.state_dict(), dst)
 
-        elif header is not None or type(item) in (dict, list, pd.Series, pd.DataFrame, np.ndarray):
-            # Anything tabular, or None, if just writing a header
-            # to start a CSV file:
-            dst = self._save_records(item, key, index_col=index_col, header=header)
+        elif header is not None or type(item) in (dict, list, np.ndarray):
+            # Anything tabular, other than dataframes, or None, 
+            # if just writing a header to start a CSV file:
+            # start a csv writer:
+            dst = self._save_records(item, key, header=header)
             
         elif isinstance(item, NeuralNetConfig):
             self.add_hparams(key, item)
@@ -489,7 +483,7 @@ TODO:
         '''
         Inverse of save(): close any csv reader on the
         experiment-controlled file to which key refers.
-        Then delete the file.
+        Then delete the file(s).
         
         :param key:
         :type key:
@@ -510,6 +504,15 @@ TODO:
                 # No writer open; OK
                 pass
             os.remove(path)
+            # For DataFrame and Series: also remove the
+            # associated .json index information file:
+            index_info_path = Path(self.abspath(key)).with_suffix('.json')
+            try:
+                os.remove(index_info_path)
+            except FileNotFoundError:
+                # Wasn't a Series or DataFrame, or
+                # saved with older version. No problem:
+                pass
 
         elif datatype in (Datatype.model, Datatype.figure, 
                           Datatype.hparams, Datatype.txt): 
@@ -582,6 +585,9 @@ TODO:
     
     def read(self, key, datatype, index_col=None, uninitialized_net=None):
         '''
+        NOTE: the index_col argument is deprecated. DataFrames and Series
+              now properly store and retrieve row and column indexes.
+              
         Given the key used in a previous save()
         call, and the datatype (Datatype.tabular, 
         Datatype.model, etc.): returns the current 
@@ -641,12 +647,13 @@ TODO:
         if path is None or not os.path.exists(path):
             raise FileNotFoundError(not_exists_err_msg)
         
+        path_obj = Path(path)
+        
         # For Datatype.model, the suffix will be
         # .pth for pytorch, or .pkl for skorch:
         if datatype == Datatype.model:
-            root = Path(path).parent
-            pytorch_model_path = root.joinpath(Path(path).stem + '.pth')
-            skorch_model_path  = root.joinpath(Path(path).stem + '.pkl')
+            pytorch_model_path = path_obj.with_suffix('.pth')
+            skorch_model_path  = path_obj.with_suffix('.pkl')
             if not pytorch_model_path.exists() and not skorch_model_path.exists():
                 raise FileNotFoundError(not_exists_err_msg)
         else:
@@ -654,6 +661,30 @@ TODO:
                 raise FileNotFoundError(not_exists_err_msg)
 
         if datatype == Datatype.tabular:
+            # See whether a .json file accompanies the .csv file
+            # for information on index and column indexer shapes
+            # and names.
+            # NOTE: any Series or DataFrame save with version >=0.2.0
+            #       will have this json file:
+            json_path = path_obj.with_suffix('.json')
+            try:
+                with open(json_path, 'r') as fd:
+                    idx_info = json.load(fd)
+                    # Read the csv file, restoring all indexing:
+                    the_df_or_series = pd.read_csv(path,
+                                                   index_col=idx_info['index_col'],
+                                                   header=idx_info['header']
+                                                   )
+                    the_df_or_series.index.name = idx_info['row_idx_name']
+                    if idx_info['type'] == 'DataFrame':
+                        # There is also a column index:
+                        the_df_or_series.columns.name = idx_info['col_idx_name']
+                return the_df_or_series 
+            except FileNotFoundError:
+                idx_info = None
+
+            # NOTE: from here to return statement is only for 
+            #       for Series and DataFrame saved using version <=0.1.15:
             try:
                 the_df_or_series = pd.read_csv(path, engine='pyarrow')
             except ValueError:
@@ -661,14 +692,14 @@ TODO:
                 # the pyarrow engine does not handle multi-index
                 # csv files; so go the slow way:
                 the_df_or_series = pd.read_csv(path)
-                
+
             # If the caller identified a column as
             # intended for the index, move that
             # col into the index. Note that 
             
             if type(the_df_or_series) == pd.DataFrame:
                 the_df_or_series = self._handle_retrieved_df_index(index_col, the_df_or_series)
-                 
+
             return the_df_or_series
         
         elif datatype == Datatype.model:
@@ -1248,7 +1279,6 @@ TODO:
     def _save_records(self, 
                       item, 
                       fname, 
-                      index_col=None, 
                       trust_list_dim=True,
                       header=None):
         '''
@@ -1276,11 +1306,6 @@ TODO:
         is expected to not be a full path, or to have an extension
         such as '.csv'. Caller is responsible for the cleaning.
         
-        The index_col is relevant only for dataframes: if None,
-        the df's index (i.e. the row labels) are ignored. Else,
-        the index values are stored as a column with column name
-        index_col.
-        
         The trust_list_dim is relevant only for 2D lists. If True,
         trust that all rows of the list are the same length. Else
         each row's length is checked, and a ValueError thrown if
@@ -1293,9 +1318,6 @@ TODO:
         :type item: {dict | list | pd.Series | pd.DataFrame}
         :param fname: name for the csv file stem, and retrieval key
         :type fname: str
-        :param index_col: for dataframes only: name of index
-            column. If None, index will be ignored
-        :type index_col: {str | None}
         :param trust_list_dim: for 2D lists only: trust that all
             rows are of equal lengths
         :type trust_list_dim: True
@@ -1312,19 +1334,54 @@ TODO:
         #if os.path.exists(dst):
         #    dst = self._unique_fname(self.csv_files_path, fname)
 
-        # Do we already have csv writer for this file:
+        # If given a dataframe or series, use Pandas built-in 
+        # to_csv(), but also save index information
+        if type(item) in (pd.DataFrame, pd.Series):
+            num_dims = len(item.shape)
+            if num_dims > 2:
+                raise ValueError(f"For dataframes, can only handle 1D or 2D, not {item}")
+            
+            item.to_csv(dst)
+            
+            # Examine row and column indexers, and 
+            # create a dict that will later allow us
+            # to reconstruct those indexers correctly:
+            # any combination of Index, MultiIndex, and
+            # indexer names:
+            # Both dfs and series have row indexers:
+            row_idx = item.index
+            idx_info = self._extract_indexer_info(
+                row_idx, 
+                axis='index')
+            
+            # Is item a DataFrame or Series:
+            idx_info['type'] = type(item).__name__
+            
+            if type(item) == pd.DataFrame:
+                # For dataframes, must also deal with column index:
+                col_idx = item.columns
+                idx_info = self._extract_indexer_info(
+                    col_idx, 
+                    idx_info=idx_info, 
+                    axis='columns')
+                
+            # Indexer info is stored under same key as the
+            # item, but with a .json extension instead of .csv:
+            idx_info_path = Path(dst).with_suffix('.json')
+            with open(idx_info_path, 'w') as fd:
+                json.dump(idx_info, fd)
+            
+            return dst
+
+        # Use a Python cvs writer:
+        # Do we already have csv writer for this file?:
         try:
             csv_writer = self.csv_writers[fname]
         except KeyError:
             # No CSV writer yet:
             if header is None:
                 header = self._get_field_names(item, 
-                                               index_col=index_col, 
                                                trust_list_dim=trust_list_dim)
-            else:
-                # Is the index_col header names provided?
-                if index_col is not None:
-                    header = [index_col] + header
             fd = open(dst, 'w')
             csv_writer = csv.DictWriter(fd, header)
             # Save the fd with the writer obj so
@@ -1339,23 +1396,9 @@ TODO:
         # Now the DictWriter exists; write the data.
         # Method for writing may vary with data type.
 
-        # For pd.Series, use its values as a row;
-        # for lists, 
-        if type(item) == pd.Series:
-            item = list(item)
-        elif type(item) == list:
-            item = np.array(item)
 
-        # If given a dataframe, use built-in to_csv():
-        if type(item) == pd.DataFrame:
-            num_dims = len(item.shape)
-            if num_dims > 2:
-                raise ValueError(f"For dataframes, can only handle 1D or 2D, not {item}")
-            
-            item.to_csv(dst, index_label=index_col)
-                    
         # Numpy array or Python list:
-        elif type(item) in(np.ndarray, list):
+        if type(item) in(np.ndarray, list):
             num_dims = len(self._list_shape(item)) if type(item) == list else len(item.shape)
             if num_dims == 1:
                 csv_writer.writerow(self._arr_to_dict(item, header))
@@ -1375,12 +1418,97 @@ TODO:
         csv_writer.fd.flush()
         return dst
 
+    #------------------------------------
+    # _extract_indexer_info
+    #-------------------
+    
+    def _extract_indexer_info(self, indexer, idx_info={}, axis='row'):
+        '''
+        Extract row index or column index information from
+        indexer. Enter the respective information in the passed-in
+        dict idx_info, and return that updated dict.
+        
+        Extracted and entered in idx_info are (depending on the idx_type):
+            
+            o for row indexers:
+                 * row_idx_type: set to 'Index', 'RangeIndex' or 'MultiIndex'
+                 * information to pass in index_col arg when using 
+                   pd.read_csv() later
+                 * row_idx_name: the name property of the row indexer
+            o for column indexers: 
+                 * col_idx_type: set to 'Index', 'RangeIndex' or 'MultiIndex'
+                 * information to pass in header arg when using 
+                   pd.read_csv() later
+                 * col_idx_name: the name property of the column indexer
+
+        The index_col or header info is determined list this:
+        
+            o For simple Index: the list [0], which means the 0th column
+              will be the index in the saved csv
+            o For RangeIndex: a list of start, stop, step of the range
+            o For MultiIndex: list of columns for each level. I.e., for an index:
+            
+                outer1
+                    inner1
+                    inner2
+                outer2
+                    inner1
+                    
+              the list [0,1] would be for index_col or header when retrieving
+              csv via pd.read_csv() later
+              
+        Only pd.Index, pd.RangeIndex, and pd. MultiIndex are handled
+        
+        The axis kwarg may be 0 or 'index' if indexer is a row indexer,
+        or 1 or 'columns' if the indexer is a column indexer.
+
+        :param indexer: row or column indexer
+        :type indexer: {pd.Index | pd.RangeIndex | pd. MultiIndex}
+        :param idx_info: dict where information is to be added
+        :type idx_info: dict
+        :param axis: whether indexer is a row or a column indexer
+        :type axis: {0 | 'index' | 1 | 'columns'}
+        :return the passed-in idx_info, with info added
+        :rtype dict
+        :raises TypeError if indexer type is unrecognized.
+        '''
+
+        idx_type = type(indexer).__name__
+        # 'Index', 'RangeIndex', or 'MultiIndex':
+        if idx_type not in ['Index', 'RangeIndex', 'MultiIndex']:
+            raise TypeError(f"Can only save indexer types Index, RangeIndex, and MultiIndex, not {idx_type}")
+        
+        if axis in (0, 'index'):
+            idx_info['row_idx_type'] = idx_type
+            # Row labels as needed for the index_col argument
+            # of pd.read_csv() later:
+            if idx_type == 'Index':
+                idx_info['index_col'] = [0]
+            elif idx_type == 'RangeIndex':
+                idx_info['index_col'] = [0]
+            elif idx_type == 'MultiIndex':
+                idx_info['index_col'] = np.arange(indexer.nlevels).tolist()
+            idx_info['row_idx_name'] = indexer.name
+
+        elif axis in (1, 'columns'):
+            idx_info['col_idx_type'] = idx_type
+            # Row labels as needed for the index_col argument
+            # of pd.read_csv() later:
+            if idx_type == 'Index':
+                idx_info['header'] = [0]
+            elif idx_type == 'RangeIndex':
+                idx_info['header'] = [0]
+            elif idx_type == 'MultiIndex':
+                idx_info['header'] = np.arange(indexer.nlevels).tolist()
+            idx_info['col_idx_name'] = indexer.name
+
+        return idx_info
 
     #------------------------------------
     # _get_field_names
     #-------------------
     
-    def _get_field_names(self, item, index_col=None, trust_list_dim=True):
+    def _get_field_names(self, item, trust_list_dim=True):
         '''
         Given a data structure, return the column header
         fields appropriate to the data
@@ -1402,10 +1530,6 @@ TODO:
         :param item: data structure from which to deduce
             a header
         :type item: {list | np.ndarray | pd.Dataframe | pd.Series | dict}
-        :param index_col: only relevant if item is a dataframe.
-            In that case: column name to use for the index column.
-            If None, index will not be included in the columns.
-        :type index_col: {None | str}
         :returns the header
         :rtype [str]
         :raises ValueError if dimensions are other than 1, or 2
@@ -1434,18 +1558,13 @@ TODO:
 
         elif type(item) == dict:
             header = list(item.keys())
-        elif type(item) == pd.Series:
-            header = item.index.to_list()
-            # When no index given to Series, col names will
-            # be integers (0..<len of series values>).
-            # Turn them into strs as expected by callers:
-            if type(header[0]) == int:
-                header = [str(col_name) for col_name in header]
+            
         elif type(item) == pd.DataFrame:
-            header = item.columns.to_list()
-            # Add a column name for the row labels:
-            if index_col is not None:
-                header = [index_col] + header
+            header = item.columns
+            
+        elif type(item) == pd.Series:
+            header = item.name
+        
         else:
             raise TypeError(f"Can only store dicts and list-like, not {item}")
         

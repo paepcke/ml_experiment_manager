@@ -10,7 +10,7 @@ import unittest
 from experiment_manager.experiment_manager import ExperimentManager, Datatype
 
 import pandas as pd
-
+import numpy as np
 
 TEST_ALL = True
 #TEST_ALL = False
@@ -19,7 +19,7 @@ TEST_ALL = True
 class IdxType:
     simple = pd.Index(pd.RangeIndex(4))
     named  = pd.Index(['row1', 'row2', 'row3', 'row4'])
-    multi  = pd.MultiIndex.from_tuples([('blue', '10'), ('blue', 20), ('red', 30), ('red', 40)])
+    multi  = pd.MultiIndex.from_tuples([('blue', 10), ('blue', 20), ('red', 30), ('red', 40)])
 
 class ExpManagerDataFrameTester(unittest.TestCase):
 
@@ -49,7 +49,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def testSimpleIdxNoIdxColNoIdxName(self):
         
-        df = self.make_spectro_df(IdxType.simple)
+        df = self.make_simple_df(IdxType.simple)
         self.exp.save('simple_idx', df)
         df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
         expected = \
@@ -60,6 +60,7 @@ class ExpManagerDataFrameTester(unittest.TestCase):
             '3    10    11    12')
 
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
 
     #------------------------------------
     # testSimpleIdxNoIdxColWithIdxName
@@ -68,52 +69,20 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def testSimpleIdxNoIdxColWithIdxName(self):
         
-        df = self.make_spectro_df(IdxType.simple)
+        df = self.make_simple_df(IdxType.simple)
         df.index.name = 'my_index'
         self.exp.save('simple_idx', df)
         df_retrieved = self.exp.read('simple_idx', Datatype.tabular)
         expected = \
-            ('   my_index  Col1  Col2  Col3\n'
-            '0         0     1     2     3\n'
-            '1         1     4     5     6\n'
-            '2         2     7     8     9\n'
-            '3         3    10    11    12')
+            ('          Col1  Col2  Col3\n'
+             'my_index                  \n'
+             '0            1     2     3\n'
+             '1            4     5     6\n'
+             '2            7     8     9\n'
+             '3           10    11    12')        
          
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
-
-        df = self.make_spectro_df(IdxType.multi)
-        df.index.rename(('color', 'number'), inplace=True)
-        self.exp.save('multi_idx', df)
-        df_retrieved = self.exp.read('multi_idx', Datatype.tabular, index_col=('color', 'number'))
-        expected = \
-            ('              Col1  Col2  Col3\n'
-            'color number                  \n'
-            'blue  10         1     2     3\n'
-            '      20         4     5     6\n'
-            'red   30         7     8     9\n'
-            '      40        10    11    12')
-        
-        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
-
-    #------------------------------------
-    #  testSimpleIdxWithIdxCol
-    #-------------------
-
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
-    def testSimpleIdxWithIdxCol(self):
-        
-        df = self.make_spectro_df(IdxType.simple)
-        self.exp.save('simple_idx', df)
-        df_retrieved = self.exp.read('simple_idx', Datatype.tabular, index_col='my_idx')
-        expected = \
-            ('        Col1  Col2  Col3\n'
-            'my_idx                  \n'
-            '0          1     2     3\n'
-            '1          4     5     6\n'
-            '2          7     8     9\n'
-            '3         10    11    12')
-        
-        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
 
     #------------------------------------
     # test_multi_index_no_index_col
@@ -121,28 +90,30 @@ class ExpManagerDataFrameTester(unittest.TestCase):
     
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_multi_index_no_index_col(self):
-        df = self.make_spectro_df(IdxType.multi)
+        df = self.make_simple_df(IdxType.multi)
         self.exp.save('multi_idx', df)
         df_retrieved = self.exp.read('multi_idx', Datatype.tabular)
 
         expected = \
-            ('  Unnamed: 0  Unnamed: 1  Col1  Col2  Col3\n'
-            '0       blue          10     1     2     3\n'
-            '1       blue          20     4     5     6\n'
-            '2        red          30     7     8     9\n'
-            '3        red          40    10    11    12')
+            ('         Col1  Col2  Col3\n'
+            'blue 10     1     2     3\n'
+            '     20     4     5     6\n'
+            'red  30     7     8     9\n'
+            '     40    10    11    12')
 
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
 
     #------------------------------------
-    # test_multi_index_with_index_col
+    # test_multi_index_with_index_col_name
     #-------------------
     
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
-    def test_multi_index_with_index_col(self):
-        df = self.make_spectro_df(IdxType.multi)
+    def test_multi_index_with_index_col_name(self):
+        df = self.make_simple_df(IdxType.multi)
+        df.index.set_names(['color', 'name'], level=[0,1], inplace=True)
         self.exp.save('multi_idx', df)
-        df_retrieved = self.exp.read('multi_idx', Datatype.tabular, index_col=('color', 'name'))
+        df_retrieved = self.exp.read('multi_idx', Datatype.tabular)
 
         expected = \
             ('            Col1  Col2  Col3\n'
@@ -153,6 +124,114 @@ class ExpManagerDataFrameTester(unittest.TestCase):
             '      40      10    11    12')
         
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    #------------------------------------
+    # test_multi_idxs_both_no_names
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_multi_idxs_both_no_names(self):
+        df = self.make_df_row_and_col_idxs(row_idx_nm=None, col_idx_nm=None)
+        self.exp.save('dbl_multi_idx', df)
+        df_retrieved = self.exp.read('dbl_multi_idx', Datatype.tabular)
+        expected = \
+            ('                     lev1_a                             lev1_b2       \n'
+            '                     lev2_a        lev2_b                lev2_a lev2_b\n'
+            '                     lev3_a lev3_b lev3_a lev3_b lev3_c  lev3_a lev3_b\n'
+            'row1_a row2_a row3_a      0      1      2      3      4       5      6\n'
+            '              row3_b      7      8      9     10     11      12     13\n'
+            '       row2_b row3_a     14     15     16     17     18      19     20\n'
+            '              row3_b     21     22     23     24     25      26     27\n'
+            '              row3_c     28     29     30     31     32      33     34\n'
+            'row1_b row2_a row3_a     35     36     37     38     39      40     41\n'
+            '       row2_b row3_a     42     43     44     45     46      47     48')
+        
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+
+    #------------------------------------
+    # test_multi_idxs_rows_with_names
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_multi_idxs_rows_with_names(self):
+        df = self.make_df_row_and_col_idxs(row_idx_nm=['Rlevel0', 'Rlevel1', 'Rlevel2'], 
+                                           col_idx_nm=None)
+        self.exp.save('dbl_multi_idx', df)
+        df_retrieved = self.exp.read('dbl_multi_idx', Datatype.tabular)
+        expected = \
+            ('                        lev1_a                             lev1_b2       \n'
+            '                        lev2_a        lev2_b                lev2_a lev2_b\n'
+            '                        lev3_a lev3_b lev3_a lev3_b lev3_c  lev3_a lev3_b\n'
+            'Rlevel0 Rlevel1 Rlevel2                                                  \n'
+            'row1_a  row2_a  row3_a       0      1      2      3      4       5      6\n'
+            '                row3_b       7      8      9     10     11      12     13\n'
+            '        row2_b  row3_a      14     15     16     17     18      19     20\n'
+            '                row3_b      21     22     23     24     25      26     27\n'
+            '                row3_c      28     29     30     31     32      33     34\n'
+            'row1_b  row2_a  row3_a      35     36     37     38     39      40     41\n'
+            '        row2_b  row3_a      42     43     44     45     46      47     48')
+        
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+        self.assertListEqual(df.index.names, ['Rlevel0', 'Rlevel1', 'Rlevel2'])
+        self.assertListEqual(df.columns.names, [None, None, None])
+
+    #------------------------------------
+    # test_multi_idxs_cols_with_names
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_multi_idxs_cols_with_names(self):
+        df = self.make_df_row_and_col_idxs(row_idx_nm=None,
+                                           col_idx_nm=['Clevel0', 'Clevel1', 'Clevel2'])
+        self.exp.save('dbl_multi_idx', df)
+        df_retrieved = self.exp.read('dbl_multi_idx', Datatype.tabular)
+        expected = \
+            ('Clevel0              lev1_a                             lev1_b2       \n'
+             'Clevel1              lev2_a        lev2_b                lev2_a lev2_b\n'
+             'Clevel2              lev3_a lev3_b lev3_a lev3_b lev3_c  lev3_a lev3_b\n'
+             'row1_a row2_a row3_a      0      1      2      3      4       5      6\n'
+             '              row3_b      7      8      9     10     11      12     13\n'
+             '       row2_b row3_a     14     15     16     17     18      19     20\n'
+             '              row3_b     21     22     23     24     25      26     27\n'
+             '              row3_c     28     29     30     31     32      33     34\n'
+             'row1_b row2_a row3_a     35     36     37     38     39      40     41\n'
+             '       row2_b row3_a     42     43     44     45     46      47     48')
+
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+        self.assertListEqual(df.index.names, [None, None, None])
+        self.assertListEqual(df.columns.names, ['Clevel0', 'Clevel1', 'Clevel2'])
+
+    #------------------------------------
+    # test_multi_idxs_both_with_names
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_multi_idxs_both_with_names(self):
+        df = self.make_df_row_and_col_idxs(row_idx_nm=['Rlevel0', 'Rlevel1', 'Rlevel2'], 
+                                           col_idx_nm=['Clevel0', 'Clevel1', 'Clevel2'])
+        self.exp.save('dbl_multi_idx', df)
+        df_retrieved = self.exp.read('dbl_multi_idx', Datatype.tabular)
+        expected = \
+            ('Clevel0                 lev1_a                             lev1_b2       \n'
+            'Clevel1                 lev2_a        lev2_b                lev2_a lev2_b\n'
+            'Clevel2                 lev3_a lev3_b lev3_a lev3_b lev3_c  lev3_a lev3_b\n'
+            'Rlevel0 Rlevel1 Rlevel2                                                  \n'
+            'row1_a  row2_a  row3_a       0      1      2      3      4       5      6\n'
+            '                row3_b       7      8      9     10     11      12     13\n'
+            '        row2_b  row3_a      14     15     16     17     18      19     20\n'
+            '                row3_b      21     22     23     24     25      26     27\n'
+            '                row3_c      28     29     30     31     32      33     34\n'
+            'row1_b  row2_a  row3_a      35     36     37     38     39      40     41\n'
+            '        row2_b  row3_a      42     43     44     45     46      47     48')
+
+        self.assertTrue(self.cmp_df_str(df_retrieved, expected))
+        self.assertTrue((df == df_retrieved).all().all())
+        self.assertListEqual(df.index.names, ['Rlevel0', 'Rlevel1', 'Rlevel2'])
+        self.assertListEqual(df.columns.names, ['Clevel0', 'Clevel1', 'Clevel2'])
 
 # ----------------------- Utilities -------------
 
@@ -168,10 +247,11 @@ class ExpManagerDataFrameTester(unittest.TestCase):
         self.exp = ExperimentManager(self.exp_root)
 
     #------------------------------------
-    # make_spectro_df
+    # make_simple_df
     #-------------------
     
-    def make_spectro_df(self, idx_type, idx_col_nm=None):
+
+    def make_simple_df(self, idx_type, idx_col_nm=None):
         
         df = pd.DataFrame([[1,2,3],
                            [4,5,6],
@@ -182,6 +262,54 @@ class ExpManagerDataFrameTester(unittest.TestCase):
         if idx_col_nm is not None:
             df.index.rename(idx_col_nm)
         return df
+    
+    #------------------------------------
+    # make_df_row_and_col_idxs
+    #-------------------
+    
+    def make_df_row_and_col_idxs(self, row_idx_nm=None, col_idx_nm=None):
+        '''
+        Create and return:
+                              lev1_a                             lev1_b2       
+                              lev2_a        lev2_b                lev2_a lev2_b
+                              lev3_a lev3_b lev3_a lev3_b lev3_c  lev3_a lev3_b
+         row1_a row2_a row3_a      0      1      2      3      4       5      6
+                       row3_b      7      8      9     10     11      12     13
+                row2_b row3_a     14     15     16     17     18      19     20
+                       row3_b     21     22     23     24     25      26     27
+                       row3_c     28     29     30     31     32      33     34
+         row1_b row2_a row3_a     35     36     37     38     39      40     41
+                row2_b row3_a     42     43     44     45     46      47     48
+        '''
+        
+        col_idx_arrs = [['lev1_a', 'lev1_a', 'lev1_a', 'lev1_a', 'lev1_a', 'lev1_b2', 'lev1_b2'],
+                        ['lev2_a', 'lev2_a', 'lev2_b', 'lev2_b', 'lev2_b', 'lev2_a', 'lev2_b'],
+                        ['lev3_a', 'lev3_b', 'lev3_a', 'lev3_b', 'lev3_c', 'lev3_a', 'lev3_b']
+                        ]
+        multi_idx_cols = pd.MultiIndex.from_arrays(col_idx_arrs)
+        
+        row_idx_arrs = [['row1_a', 'row1_a', 'row1_a', 'row1_a', 'row1_a', 'row1_b', 'row1_b'],
+                        ['row2_a', 'row2_a', 'row2_b', 'row2_b', 'row2_b', 'row2_a', 'row2_b'],
+                        ['row3_a', 'row3_b', 'row3_a', 'row3_b', 'row3_c', 'row3_a', 'row3_a']
+                        ]
+        multi_idx_rows = pd.MultiIndex.from_arrays(row_idx_arrs)
+        
+        df_both = pd.DataFrame(np.zeros((len(multi_idx_rows), 
+                                         len(multi_idx_cols))), 
+                                         columns=multi_idx_cols, 
+                                         index=multi_idx_rows, 
+                                         dtype=int)
+        content = np.arange(49).reshape((7,7))
+        df_both.loc[:,:] = content
+        
+        if row_idx_nm is not None:
+            df_both.index.names = row_idx_nm
+            
+        if col_idx_nm is not None:
+            df_both.columns.names = col_idx_nm
+        
+        return df_both
+
     
     #------------------------------------
     # df_from_str
