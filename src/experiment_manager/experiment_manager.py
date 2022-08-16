@@ -122,7 +122,7 @@ TODO:
     '''
 
     SUPPORTED_INDEXERS = ['Index', 'Int64Index', 'RangeIndex', 'MultiIndex', 'Float64Index']
-    
+
     #------------------------------------
     # Constructor 
     #-------------------
@@ -164,6 +164,12 @@ TODO:
         self.root              = root_path
         self.auto_save_thread  = None
         self.freeze_state_file = freeze_state_file
+
+        # Function matrix to convert between  
+        # various Python primitive types, such
+        # as str to int or float to np.int64:
+        self.type_converter = TypeConverter()
+        
         
         # No csv writers yet; will be a dict
         # of CSV writer instances keyed by file
@@ -390,8 +396,13 @@ TODO:
             history_path   = os.path.join(self.models_path, 'history.json')
             model.save_params(dst, f_optimizer=optimizer_path, f_history=history_path)
             
-        if type(item) in (pd.DataFrame, pd.Series):
-            dst = self._save_records(item, key)
+        if type(item) in (pd.DataFrame, pd.Series, dict, list, np.ndarray):
+            dst = self._save_records(item, key, header=header)
+
+        elif header is not None:
+            # If just writing a header to start a CSV file:
+            # start a csv writer:
+            dst = self._save_records(item, key, header=header)
 
         elif isinstance(item, nn.Module):
             model = item
@@ -401,12 +412,6 @@ TODO:
             #    dst = self._unique_fname(self.models_path, key)
             torch.save(model.state_dict(), dst)
 
-        elif header is not None or type(item) in (dict, list, np.ndarray):
-            # Anything tabular, other than dataframes, or None, 
-            # if just writing a header to start a CSV file:
-            # start a csv writer:
-            dst = self._save_records(item, key, header=header)
-            
         elif isinstance(item, NeuralNetConfig):
             self.add_hparams(key, item)
             dst = os.path.join(self.hparams_path, f"{key}.json")
@@ -487,8 +492,8 @@ TODO:
         experiment-controlled file to which key refers.
         Then delete the file(s).
         
-        :param key:
-        :type key:
+        :param key: experiment key
+        :type key: str
         '''
         if type(datatype) != Datatype and not issubclass(datatype, JsonDumpableMixin):
             raise TypeError(f"Data type argument must be a Datatype enum member, not {datatype}")
@@ -508,7 +513,7 @@ TODO:
             os.remove(path)
             # For DataFrame and Series: also remove the
             # associated .json index information file:
-            index_info_path = Path(self.abspath(key)).with_suffix('.json')
+            index_info_path = Path(path).with_suffix('.json')
             try:
                 os.remove(index_info_path)
             except FileNotFoundError:
@@ -635,7 +640,7 @@ TODO:
         :type index_col: {None | str}
         :param uninitialized_net: initialized neural net; only
             needed for models 
-        :type uninitialized_net: {skorch.classifier.NeuralNet | torch.nn.Module
+        :type uninitialized_net: {skorch.classifier.NeuralNet | torch.nn.Module}
         :returns retrieved item
         :rtype {any}
         :raise FileNotFoundError if item not found
@@ -672,23 +677,33 @@ TODO:
             try:
                 with open(json_path, 'r') as fd:
                     idx_info = json.load(fd)
-                    # Read the csv file, restoring all indexing:
-                    the_df_or_series = pd.read_csv(path,
-                                                   index_col=idx_info['index_col'],
-                                                   header=idx_info['header']
-                                                   )
-                    # Fix the dtypes of the two indexers:
-                    cur_row_idx = the_df_or_series.index
-                    the_df_or_series.index = self._adjust_index(cur_row_idx,
-                                                                idx_info,
-                                                                axis='index')
-                    if idx_info['type'] == 'DataFrame':
-                        # There is also a column index:
-                        cur_col_idx = the_df_or_series.columns
-                        the_df_or_series.columns = self._adjust_index(cur_col_idx, 
-                                                                      idx_info,
-                                                                      axis='columns')
-                return the_df_or_series 
+                    if idx_info['type'] in ('DataFrame', 'Series'):
+                        the_df_or_series = pd.read_csv(path,
+                                                       index_col=idx_info['index_col'],
+                                                       header=idx_info['header']
+                                                       )
+                        cur_row_idx = the_df_or_series.index
+                        the_df_or_series.index = self._adjust_index(cur_row_idx,
+                                                                    idx_info,
+                                                                    axis='index')
+                        if idx_info['type'] == 'DataFrame':
+                            # There is also a column index:
+                            cur_col_idx = the_df_or_series.columns
+                            the_df_or_series.columns = self._adjust_index(cur_col_idx, 
+                                                                          idx_info,
+                                                                          axis='columns')
+                        if idx_info['type'] == 'Series':
+                            # We retrieved a Series, which pd.read_csv()
+                            # turns into a df. Make it a Series:
+                            the_df_or_series = the_df_or_series.iloc[:, 0]
+                            # The above conversion gives the series name '0'
+                            the_df_or_series.name = idx_info['name']
+                        return the_df_or_series 
+                    
+                    else: # list, ndarray, or dict:
+                        return self._retrieve_records(path, idx_info)
+                
+            
             except FileNotFoundError:
                 idx_info = None
 
@@ -1238,7 +1253,7 @@ TODO:
                         col_names = csv.DictReader(fd).fieldnames
                     except UnicodeDecodeError as _e:
                         continue
-            
+
                 # Make the writer:
                 fd = open(path, 'a')
                 writer = csv.DictWriter(fd, col_names)
@@ -1373,6 +1388,9 @@ TODO:
                     col_idx, 
                     idx_info=idx_info, 
                     axis='columns')
+            else:
+                # Item is a Series: preserve its name:
+                idx_info['name'] = item.name
                 
             # Indexer info is stored under same key as the
             # item, but with a .json extension instead of .csv:
@@ -1382,7 +1400,7 @@ TODO:
             
             return dst
 
-        # Use a Python cvs writer:
+        # Use a Python cvs writer for everything else:
         # Do we already have csv writer for this file?:
         try:
             csv_writer = self.csv_writers[fname]
@@ -1396,7 +1414,8 @@ TODO:
             # Save the fd with the writer obj so
             # we can flush() when writing to it:
             csv_writer.fd = fd
-            csv_writer.writeheader()
+            if header is not None:
+                csv_writer.writeheader()
             fd.flush()
             self.csv_writers[fname] = csv_writer
         else:
@@ -1409,9 +1428,15 @@ TODO:
         # Numpy array or Python list:
         if type(item) in(np.ndarray, list):
             num_dims = len(self._list_shape(item)) if type(item) == list else len(item.shape)
+            
+            # Add a json type info file for correct retrieval later:
+            type_info = {'type' : 'list' if type(item) == list else 'ndarray'}
+            
             if num_dims == 1:
                 csv_writer.writerow(self._arr_to_dict(item, header))
+                type_info['row_dtype'] = type(item[0]).__name__
             else:
+                type_info['row_dtype'] = type(item[0][0]).__name__
                 for row in item:
                     csv_writer.writerow(self._arr_to_dict(row, header))
 
@@ -1419,12 +1444,27 @@ TODO:
         elif type(item) == dict:
             # This is a DictWriter's native food:
             csv_writer.writerow(item)
+            type_info = {'type' : 'dict'}
+            # Dict values can have all sorts of types.
+            # For what it's worth, we record the first
+            # value's type:
+            try:
+                type_info['row_dtype'] = type(list(item.values())[0]).__name__
+            except IndexError:
+                type_info['row_dtype'] = None
 
         # If none of the above types, item must be None:
         elif item is not None:
             raise TypeError(f"Unknown item type {item}")
-            
+
         csv_writer.fd.flush()
+        if item is not None:
+            # Type info is stored under same key as the
+            # item, but with a .json extension instead of .csv:
+            type_info_path = Path(dst).with_suffix('.json')
+            with open(type_info_path, 'w') as fd:
+                json.dump(type_info, fd)
+
         return dst
 
     #------------------------------------
@@ -1502,6 +1542,7 @@ TODO:
             # of pd.read_csv() later:
             if idx_kind in ['Index', 'Int64Index', 'Float64Index', 'RangeIndex']:
                 idx_info['index_col'] = [0]
+                idx_info['header'] = [0]
             elif idx_kind == 'MultiIndex':
                 idx_info['index_col'] = np.arange(indexer.nlevels).tolist()
             idx_info['row_idx_name'] = indexer.name
@@ -1519,6 +1560,39 @@ TODO:
             idx_info['col_dtype'] = indexer.dtype.name
             
         return idx_info
+
+    #------------------------------------
+    # _retrieve_records
+    #-------------------
+    
+    def _retrieve_records(self, path, type_info):
+        
+        item_type = type_info['type']
+        if item_type == 'list':
+            with open(path, 'r') as fd:
+                reader = csv.reader(fd)
+                res = []
+                # Discard the header line:
+                next(reader)
+                for line in reader:
+                    res.append(line)
+                # Set the elements to the proper type:
+                res_typed = self.type_converter(res, type_info['row_dtype'])
+                
+        elif item_type == 'ndarray':
+            with open(path, 'r') as fd:
+                reader = csv.reader(fd)
+                res = np.array()
+                for line in reader:
+                    np.vstack([res, line])
+                res_typed = self.type_converter(res, type_info['row_dtype'])
+                
+        elif item_type == 'dict':
+            with open(path, 'r') as fd:
+                reader = csv.DictReader(fd)
+                res_typed = next(reader)
+        
+        return res_typed
 
     #------------------------------------
     # _get_field_names
@@ -1558,20 +1632,15 @@ TODO:
             dims = self._list_shape(item)
         elif type(item) == np.ndarray:
             dims = item.shape
-
-        if type(item) == np.ndarray or type(item) == list:
+        
+        if type(item) in (np.ndarray, list):
             if len(dims) == 1:
                 header = list(range(dims[0]))
             elif len(dims) == 2:
                 header = list(range(dims[1]))
             else:
                 bad_shape = True
-            # When no index given to Series, col names will
-            # be integers (0..<len of series values>).
-            # Turn them into strs as expected by callers:
-            if type(header[0]) == int:
-                header = [str(col_name) for col_name in header]
-
+        
         elif type(item) == dict:
             header = list(item.keys())
             
@@ -1579,10 +1648,10 @@ TODO:
             header = item.columns
             
         elif type(item) == pd.Series:
-            header = item.name
-        
+            header = item.index
+
         else:
-            raise TypeError(f"Can only store dicts and list-like, not {item}")
+            raise TypeError(f"Can only store dataframes, series, dicts and list-like, not {item}")
         
         # Item is not 1 or 2D:
         if bad_shape:
@@ -1597,7 +1666,11 @@ TODO:
             for row_num, row in enumerate(item):
                 if len(row) != len_1st_row:
                     raise ValueError(f"Inconsistent list row length in row {row_num}")
-        stringified_header = [str(header_el) for header_el in header]
+
+        if header is not None:
+            stringified_header = [str(header_el) for header_el in header]
+        else:
+            stringified_header = None
         return stringified_header
 
     #------------------------------------
@@ -1631,6 +1704,7 @@ TODO:
         :type [str]
         :return dictionary with keys being the fieldnames
         '''
+        
         if len(arr1D) != len(fieldnames):
             raise ValueError(f"Inconsistent shape of arr ({arr1D}) for fieldnames ({fieldnames})")
         tmp_dict = {k : v for k,v in zip(fieldnames, arr1D)}
@@ -1930,7 +2004,7 @@ TODO:
 
         new_idx.astype(dst_idx_dtype)
         new_idx.name = dst_idx_name
-            
+
         return new_idx
         
 
@@ -2022,6 +2096,180 @@ TODO:
     
     def __hash__(self):
         return id(self)
+        
+# ------------------- Class TypeConverter -----------------
+
+class TypeConverter:
+    
+    #------------------------------------
+    # Constructor
+    #-------------------
+    
+    def __init__(self):
+        
+        # Create an nxn lookup matrix:
+        #
+        #       int str float ...
+        #  int   x   y    z
+        #  str
+        #  float
+        #
+        # where x y z are functions that convert
+        # from row-label to col-label.
+        #
+        # Included are 
+        #   o all versions of int: int, np.int16, np.int32, ...
+        #   o all versions of float: float, np.float16, np.float32, ...
+        #   o set
+        #   o tuple
+        #   o list
+        #
+        # Where no conversion is possible, cells are np.nan 
+        
+        idxs = ['int','int64','int32','int16','str',
+                'float','float64','float32','float16',
+                'list','tuple','set','dict']
+        cols = ['int','int64','int32','int16','str',
+                'float','float64','float32','float16',
+                'list','tuple','set','dict']
+        num_idxs = len(idxs)
+        num_cols = len(cols)
+        nans     = np.array([np.nan]*(num_idxs*num_cols)).reshape((num_idxs, num_cols))
+        df = pd.DataFrame(nans, index=idxs, columns=cols)
+        
+        df.loc[['int','int64','int32','int16'],
+               ['int','int64','int32','int16']] = \
+                  [[int, np.int64, np.int32, np.int16],
+                   [int, np.int64, np.int32, np.int16],
+                   [int, np.int64, np.int32, np.int16],
+                   [int, np.int64, np.int32, np.int16]]
+        
+        df.loc[['int','int64','int32','int16'],
+               ['float','float64','float32','float16']] = \
+                  [[float, np.float64, np.float32, np.float16],
+                   [float, np.float64, np.float32, np.float16],
+                   [float, np.float64, np.float32, np.float16],
+                   [float, np.float64, np.float32, np.float16]]
+        
+        df.loc[['float','float64','float32','float16'],
+               ['int','int64','int32','int16']] = \
+                  [[int, np.int64, np.int32, np.int16],
+                   [int, np.int64, np.int32, np.int16],
+                   [int, np.int64, np.int32, np.int16],
+                   [int, np.int64, np.int32, np.int16]]
+        
+        df.loc[['int','int64','int32','int16'],
+               ['str']] = [str,str,str,str]
+        
+        df.loc[['float','float64','float32','float16'],
+               ['str']] = [str,str,str,str]
+        
+        df.loc[['str'],
+               ['int','int64','int32','int16']] = \
+                  [int, np.int64, np.int32, np.int16]
+        
+        df.loc[['tuple', 'list', 'set'],
+               ['list']] = [list, list, list]
+        
+        df.loc[['tuple', 'list', 'set'],
+               ['tuple']] = [tuple, tuple, tuple]
+        
+        df.loc[['tuple', 'list', 'set'],
+               ['set']] = [set, set, set]
+
+        self.conv_df = df
+
+    #------------------------------------
+    # __call__
+    #-------------------
+    
+    def __call__(self, item, to_type_str):
+        '''
+        Enables instances of this class to work like
+        a single function, which converts from_type to
+        two_type. 
+        
+        If conversion is not possible, raises TypeError.
+        Example: attempt to convert int to a list
+        
+        :param item: the item to convert
+        :type item: {int | float | str | list | set | tuple}
+        :param to_type_str: destination type, such as 'int', 'float32',
+            or 'float32'
+        :type to_type_str: str
+        :return converted quantity
+        :rtype {int | float | str | list | set | tuple}
+        :raises TypeError when conversion impossible
+        '''
+
+        # Distinguish between caller wanting
+        # contained elements converted, or the
+        # container: 
+        #       [1,2,3] ---> ['1','2','3']
+        # vs
+        #       [1,2,3] ---> set([1,2,3])
+        if to_type_str in ('list', 'set', 'tuple'):
+            convert_container = True
+        else:
+            convert_container = False
+        
+        if type(item) in (tuple, set):
+            dim = 1
+            if convert_container:
+                # Caller wants the container to 
+                # be converted, rather than the 
+                # content elements:
+                el_type = type(item).__name__
+            else:
+                el_type = type(list(item)[0]).__name__
+                
+        elif type(item) == np.ndarray:
+            dim = len(item.shape)
+            el_type = type(item[0][0]).__name__ if dim == 2 else type(item[0]).__name__
+            
+        elif type(item) == list:
+            dim = 2 if type(item[0]) == list else 1
+            if convert_container:
+                # Container conversion?
+                el_type = type(item).__name__
+            else:
+                # Caller wants conversion of the 
+                # contained elements:
+                el_type = type(item[0][0]).__name__ if dim == 2 else type(item[0]).__name__
+        try:
+            # Allow numpy types to be named
+            # with or without leading '':
+            if el_type.startswith('np.'):
+                el_type = el_type[3:]
+            if to_type_str.startswith('np.'):
+                to_type_str = to_type_str[3:]
+            conv_func = self.conv_df.loc[el_type, to_type_str]
+            if pd.isnull(conv_func):
+                raise TypeError()
+        except Exception:
+            raise TypeError(f"Cannot convert from {el_type} to {to_type_str}")
+        
+        if dim == 1:
+            if convert_container:
+                res = conv_func(item)
+            else:
+                res = list(map(lambda el, func=conv_func : func(el), item))
+                # This gave a list. Convert
+                # to whatever the container was before:
+                if type(item) == np.ndarray:
+                    res = np.array(res)
+                else:
+                    res = type(item)(res)
+        else:
+            if convert_container:
+                res = conv_func(item)
+            else:
+                res = [list(map(lambda el, func=conv_func : func(el), row)) for row in item]
+        
+        if type(item) == np.ndarray:
+            return np.array(res)
+
+        return res
         
 
 # ------------------- Class AutoSaveThread -----------------

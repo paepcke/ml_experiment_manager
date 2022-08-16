@@ -13,19 +13,19 @@ import tempfile
 import unittest
 import zlib
 
+from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread, Datatype, \
+    JsonDumpableMixin, TypeConverter
+from experiment_manager.neural_net_config import NeuralNetConfig
 import skorch
 import torch
 
-from experiment_manager.experiment_manager import ExperimentManager, AutoSaveThread, Datatype, \
-    JsonDumpableMixin
-from experiment_manager.neural_net_config import NeuralNetConfig
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 
-TEST_ALL = True
-#TEST_ALL = False
+#TEST_ALL = True
+TEST_ALL = False
 
 '''
 TODO:
@@ -273,22 +273,27 @@ class ExperimentManagerTest(unittest.TestCase):
         exp = ExperimentManager(self.exp_root)
         self.exp = exp
         
+        tlist = [[1,3,4], [4,5,6]]
+        self.exp.save('my_list', tlist)
+        exp.close()
+        
+        csv_path = self.exp.abspath('my_list', Datatype.tabular)
+        
+        retrieved = []
+        with open(csv_path, 'r') as fd:
+            reader = csv.reader(fd)
+            for line in reader:
+                retrieved.append(line)
+                
+        expected = [['0', '1', '2'], ['1', '3', '4'], ['4', '5', '6']]
+        self.assertListEqual(retrieved, expected)
+        
+        re_read  = self.exp.read('my_list', Datatype.tabular)
+        self.assertListEqual(re_read, tlist)
+
         df = pd.DataFrame([[1,2,3],[10,20,30]], index=[(3, 0.5, 0.01), (4, 0.6, 0.08)], columns=[100,200,300])
         exp.save('df', df)
         exp.close()
-        
-        row_dicts = self.read_csv_file('df')
-        expected  = [{'100': '1', '200': '2', '300': '3'}, {'100': '10', '200': '20', '300': '30'}]
-        for i, one_dict in enumerate(row_dicts):
-            self.assertDictEqual(one_dict, expected[i])
-
-        exp = ExperimentManager(self.exp_root)
-        exp.save('df', df)
-        row_dicts = self.read_csv_file('df')
-        expected  = [{'100': '1', '200': '2', '300': '3'}, {'100': '10', '200': '20', '300': '30'},
-                     {'100': '1', '200': '2', '300': '3'}, {'100': '10', '200': '20', '300': '30'}]
-        for i, one_dict in enumerate(row_dicts):
-            self.assertDictEqual(one_dict, expected[i])
 
     #------------------------------------
     # test_adding_to_csv_index_included
@@ -321,7 +326,57 @@ class ExperimentManagerTest(unittest.TestCase):
 
         for i, one_dict in enumerate(row_dicts):
             self.assertDictEqual(one_dict, expected[i])
+
+    #------------------------------------
+    # test_type_converter
+    #-------------------
+    
+    #******* Run all tests, and keep debuggin
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_type_converter(self):
         
+        converter = TypeConverter()
+        
+        l = [1,2,3]
+        l_str = converter(l, 'str')
+        expected = ['1', '2', '3']
+        self.assertListEqual(l_str, expected)
+
+        l = [[1,2,3], [4,5,6]]
+        l_str = converter(l, 'str')
+        expected = [['1', '2', '3'],['4', '5', '6']]
+        self.assertListEqual(l_str, expected)
+    
+        l = [[1,2,3], [4,5,6]]
+        l_str = converter(l, 'float')
+        expected = [[1.0, 2.0, 3.0],[4.0, 5.0, 6.0]]
+        self.assertListEqual(l_str, expected)
+    
+        a = np.array([1,2,3])
+        a_float = converter(a, 'float')
+        expected = np.array([1.0, 2.0, 3.0])
+        self.assertTrue((a_float == expected).all())
+        
+        a = np.array([[1,2,3], [4,5,6]])
+        a_float = converter(a, 'float')
+        expected = np.array([[1.0, 2.0, 3.0],[4.0, 5.0, 6.0]])
+        self.assertTrue((a_float == expected).all())
+        
+        t = (1,2,3)
+        l = converter(t, 'list')
+        expected = [1,2,3]
+        self.assertListEqual(l, expected)
+        
+        t = set([1,2,3])
+        l = converter(t, 'list')
+        expected = [1,2,3]
+        self.assertListEqual(l, expected)
+        
+        s = set([1,2,3])
+        s_floats = converter(s, 'float')
+        expected = set([1.0, 2.0, 3.0])
+        self.assertSetEqual(s_floats, expected)
 
     #------------------------------------
     # test_saving_hparams
@@ -365,83 +420,6 @@ class ExperimentManagerTest(unittest.TestCase):
         config_obj = exp1['my_config']
         self.assertEqual(config_obj['Training']['net_name'], 'resnet18')
         self.assertEqual(config_obj.getint('Parallelism', 'master_port'), 5678)
-
-    #------------------------------------
-    # test_saving_dataframes
-    #-------------------
-    
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
-    def test_saving_dataframes(self):
-        
-        exp = ExperimentManager(self.exp_root)
-
-        df = pd.DataFrame([[1,2,3],
-                           [4,5,6],
-                           [7,8,9]], 
-                           columns=['foo','bar','fum'], 
-                           index= ['row1','row2','row3'])
-
-        # Save without the row labels (i.e w/o the index):
-        dst_without_idx = exp.save('mydf', df)
-        self.assertEqual(dst_without_idx, exp.csv_writers['mydf'].fd.name)
-
-        df_retrieved_no_idx_saved = pd.read_csv(dst_without_idx)
-        # Should have:
-        #        foo  bar  fum
-        #    0    1    2    3
-        #    1    4    5    6
-        #    2    7    8    9
-        
-        df_true_no_idx = pd.DataFrame.from_dict({'foo' : [1,4,7], 'bar' : [2,5,8], 'fum' : [3,6,9]})
-        self.assertTrue((df_retrieved_no_idx_saved == df_true_no_idx).all().all())
-
-        # Now save with index:
-        dst_with_idx = exp.save('mydf_with_idx', df, index_col='My Col Labels')
-        df_true_with_idx = df_true_no_idx.copy()
-        df_true_with_idx.index = ['row1', 'row2', 'row3']
-        df_retrieved_with_idx_saved = pd.read_csv(dst_with_idx, index_col='My Col Labels')
-        # Should have:
-        #           foo  bar  fum
-        #    row1    1    2    3
-        #    row2    4    5    6
-        #    row3    7    8    9
-        self.assertTrue((df_retrieved_with_idx_saved == df_true_with_idx).all().all())
-        exp.close()
-        
-        del exp
-        
-        # Reconstitute the same experiment:
-        exp1 = ExperimentManager(self.exp_root)
-        # For cleanup in tearDown():
-        self.exp = exp1
-        
-        # All the above tests should work again:
-        
-        df_no_idx   = pd.read_csv(exp1.abspath('mydf', Datatype.tabular))
-        df_with_idx = pd.read_csv(exp1.abspath('mydf_with_idx', Datatype.tabular), 
-                                  index_col='My Col Labels')
-        self.assertTrue((df_no_idx == df_true_no_idx).all().all())
-        self.assertTrue((df_with_idx == df_true_with_idx).all().all())
-
-    #------------------------------------
-    # test_saving_series
-    #-------------------
-    
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
-    def test_saving_series(self):
-        
-        exp = ExperimentManager(self.exp_root)
-        # For cleanup in tearDown():
-        self.exp = exp
-        my_series = pd.Series([1,2,3], index=['One', 'Two', 'Three'])
-        
-        dst = exp.save('series_test', my_series)
-        # Get a dataframe whose first row is the series:
-        series_read = pd.read_csv(dst)
-        first_row   = series_read.iloc[0,:] 
-        self.assertTrue((first_row == my_series).all())
-
-        exp.close()
 
     #------------------------------------
     # test_saving_json
@@ -603,15 +581,15 @@ class ExperimentManagerTest(unittest.TestCase):
         exp = ExperimentManager(self.exp_root)
 
         exp.save('foo', pd.Series([1,2,3], index=['blue', 'green', 'yellow']))
-        expected_path = os.path.join(exp.csv_files_path, 'foo.csv')
-        writer = exp.csv_writers['foo']
-        self.assertFalse(writer.fd.closed)
-        self.assertTrue(os.path.exists(expected_path))
+        expected_csv_path  = os.path.join(exp.csv_files_path, 'foo.csv')
+        expected_json_path = os.path.join(exp.csv_files_path, 'foo.json')
+        self.assertTrue(os.path.exists(expected_csv_path))
+        self.assertTrue(os.path.exists(expected_json_path))
         
         # Now delete the file:
         exp.destroy('foo', Datatype.tabular)
-        self.assertFalse(os.path.exists(expected_path))
-        self.assertTrue(writer.fd.closed)
+        self.assertFalse(os.path.exists(expected_csv_path))
+        self.assertFalse(os.path.exists(expected_json_path))
 
         # Same for Figure:
         fig = plt.Figure()
@@ -765,7 +743,9 @@ class ExperimentManagerTest(unittest.TestCase):
         model_path = os.path.join(exp.models_path, 'tiny_model.pth')
         new_tiny_model = TinyModel()
         new_tiny_model.load_state_dict(torch.load(model_path))
-        model = exp.read('tiny_model', Datatype.model, self.tiny_model)
+        model = exp.read('tiny_model', 
+                         Datatype.model, 
+                         uninitialized_net=self.tiny_model)
         self.assertPytorchModelsEqual(model, new_tiny_model)
         
         # Test loading state dict into existing skorch model:
@@ -774,7 +754,9 @@ class ExperimentManagerTest(unittest.TestCase):
         new_tiny_skorch_model.load_params(f_params=self.skorch_model_path,
                                           f_optimizer=self.skorch_opt_path,
                                           f_history=self.skorch_hist_path)
-        skorch_model = exp.read('tiny_skorch', Datatype.model, self.tiny_skorch)
+        skorch_model = exp.read('tiny_skorch', 
+                                Datatype.model, 
+                                uninitialized_net=self.tiny_skorch)
         self.assertSkorchModelsEqual(skorch_model, new_tiny_skorch_model)
 
         
@@ -828,9 +810,7 @@ class ExperimentManagerTest(unittest.TestCase):
         item = pd.DataFrame([[1,2,3],[4,5,6]], 
                             index=['row0', 'row1'], 
                             columns=['foo', 'bar', 'fum'])
-        fld_names = exp._get_field_names(item, index_col='DfIndex')
-        self.assertEqual(fld_names, ['DfIndex', 'foo', 'bar', 'fum'])
-        
+
         # Dataframes not including index:
         fld_names = exp._get_field_names(item)
         self.assertEqual(fld_names, ['foo', 'bar', 'fum'])

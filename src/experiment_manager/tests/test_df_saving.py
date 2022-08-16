@@ -42,6 +42,98 @@ class ExpManagerDataFrameTester(unittest.TestCase):
 
 # ---------------------  Tests -----------
 
+    # ---------------- Series -------------
+
+    #------------------------------------
+    # test_series_with_int_index_no_name
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_series_with_int_index_no_name(self):
+        
+        ser = pd.Series([1,2,3,4])
+        ser.index = [10,20,30,40]
+        
+        self.exp.save('simple_idx', ser)
+        ser_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('10    1\n'
+             '20    2\n'
+             '30    3\n'
+             '40    4')
+
+        self.assertTrue(self.cmp_df_str(ser_retrieved, expected))
+        self.assertEqual(ser.name, ser_retrieved.name)
+        self.assertTrue((ser == ser_retrieved).all().all())
+
+    #------------------------------------
+    # test_series_with_int_index_with_name
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_series_with_int_index_with_name(self):
+        
+        ser = pd.Series([1,2,3,4])
+        ser.index = [10,20,30,40]
+        ser.name  = 'MySeries'
+        
+        self.exp.save('simple_idx', ser)
+        ser_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('10    1\n'
+             '20    2\n'
+             '30    3\n'
+             '40    4')
+
+        self.assertTrue(self.cmp_df_str(ser_retrieved, expected))
+        self.assertEqual(ser.name, ser_retrieved.name)
+        self.assertTrue((ser == ser_retrieved).all().all())
+
+    #------------------------------------
+    # test_series_with_float_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_series_with_float_index(self):
+        
+        ser = pd.Series([1,2,3,4])
+        ser.index = [10.0,20.0,30.0,40.0]
+        ser.name  = 'MySeries'
+        
+        self.exp.save('simple_idx', ser)
+        ser_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('10.0    1\n'
+             '20.0    2\n'
+             '30.0    3\n'
+             '40.0    4')
+
+        self.assertTrue(self.cmp_df_str(ser_retrieved, expected))
+        self.assertTrue((ser == ser_retrieved).all().all())
+
+    #------------------------------------
+    # test_series_with_txt_index
+    #-------------------
+
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_series_with_txt_index(self):
+        
+        ser = pd.Series([1,2,3,4])
+        ser.index = ['row0', 'row1', 'row2', 'row3']
+        
+        self.exp.save('simple_idx', ser)
+        ser_retrieved = self.exp.read('simple_idx', Datatype.tabular)
+        expected = \
+            ('row0    1\n'
+             'row1    2\n'
+             'row2    3\n'
+             'row3    4')
+
+        self.assertTrue(self.cmp_df_str(ser_retrieved, expected))
+        self.assertTrue((ser == ser_retrieved).all().all())
+
+    # ---------------- DataFrames -------------
+
     #------------------------------------
     # testSimpleIdxNoIdxColNoIdxName
     #-------------------
@@ -189,7 +281,6 @@ class ExpManagerDataFrameTester(unittest.TestCase):
         self.assertTrue(self.cmp_df_str(df_retrieved, expected))
         self.assertTrue((df == df_retrieved).all().all())
 
-    
     #------------------------------------
     # test_multi_index_no_index_col
     #-------------------
