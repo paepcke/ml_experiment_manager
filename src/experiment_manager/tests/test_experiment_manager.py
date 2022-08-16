@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 
 
-TEST_ALL = True
-#TEST_ALL = False
+#******TEST_ALL = True
+TEST_ALL = False
 
 '''
 TODO:
@@ -154,6 +154,38 @@ class ExperimentManagerTest(unittest.TestCase):
         self.assertEqual(exp1['root_path'], self.exp_root)
         self.assertEqual(exp1['_models_path'], os.path.join(self.exp_root, 'models'))
         self.assertTrue(exp1.csv_writers == {})
+
+    #------------------------------------
+    # test_top_level_dict_api
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_top_level_dict_api(self):
+        
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        
+        self.exp = exp
+        
+        exp['some_number'] = 10
+        
+        self.assertEqual(exp['some_number'], 10)
+        
+        exp.close()
+        
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+        self.assertEqual(exp['some_number'], 10)
+
+        l = [10,20,30]
+        self.exp['myList'] = l
+        
+        self.assertListEqual(exp['myList'], l)
+        
+        d = {'foo' : 10, 'bar' : 20}
+        self.exp['myDict'] = d 
+        self.assertDictEqual(exp['myDict'], d)
 
     #------------------------------------
     # test_dict_addition 

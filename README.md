@@ -5,14 +5,18 @@ Container to hold all information about an experiment: tabular data
 created during training and inference, hyper parameters, charts,
 tensorboard entries, and (pytorch/skorch) model snapshots. These data are
 stored on disk in standard formats that are accessible by other tools,
-such as Excel and image viewers. Except for model snapshots, the
+such as Excel, pytorch, and image viewers. Except for model snapshots, the
 facility is ML platform agnostic. Only pytorch and skorch model instances are
 currently handled for saving, though all other features remain fully
 functional.
 
+The user associates each asset with a key (string) of their
+choice. The manager accesses the asset when given a key.
+
 Selected Details:
 
-- Persistent dict API for 'non-special' data, 
+- Persistent dict API for 'non-special' data, such as lists,
+  numbers, or dicts.
 - Uniform API for special machine learning data types like
     tables, pyplot figures, and model snapshots.
 - Creates human-readable files under a single directory root
@@ -96,7 +100,7 @@ writers.
 To reopen an existing experiment:
 
 ```
-    exp = ExperimentManager(experiment_archive)
+    exp = ExperimentManager(experiment_archive_root)
 ```
 
 The data saved in the experiment can be retrieved as appropriate
