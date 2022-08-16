@@ -1404,6 +1404,17 @@ TODO:
         # Do we already have csv writer for this file?:
         try:
             csv_writer = self.csv_writers[fname]
+            # For saving dicts, we need to close
+            # the writer, and make a new one. We
+            # cannot simple write a new dict to 
+            # the same file (truncate() seems to
+            # leave NUL bytes that bite later:
+            if type(item) == dict:
+                csv_writer.fd.close()
+                # Pretend we never found one;
+                # the except clause creates a
+                # new writer:
+                raise KeyError()
         except KeyError:
             # No CSV writer yet:
             if header is None:
@@ -1445,11 +1456,11 @@ TODO:
             # This is a DictWriter's native food:
             csv_writer.writerow(item)
             type_info = {'type' : 'dict'}
-            # Dict values can have all sorts of types.
-            # For what it's worth, we record the first
-            # value's type:
+            # Find the 'highest' type in the dict values,
+            # as per the hierarchy str, int, float, complex:
             try:
-                type_info['row_dtype'] = type(list(item.values())[0]).__name__
+                # ... and note the top type:
+                type_info['row_dtype'] = self.type_converter.top_type(list(item.values()))
             except IndexError:
                 type_info['row_dtype'] = None
 
@@ -1582,16 +1593,34 @@ TODO:
         elif item_type == 'ndarray':
             with open(path, 'r') as fd:
                 reader = csv.reader(fd)
-                res = np.array()
-                for line in reader:
-                    np.vstack([res, line])
-                res_typed = self.type_converter(res, type_info['row_dtype'])
+                # Tolerate leading header row(s) by skipping
+                # them. We cannot use the skiprows kwarg, b/c
+                # we don't know how mny header rows there are.
+                # Only deal with up to 3 header rows before
+                # giving up:
+                trials_left = 3
+                while True:
+                    try:
+                        res_typed = np.loadtxt(fd, delimiter=',', dtype=type_info['row_dtype'])
+                        break
+                    except ValueError:
+                        if trials_left > 0:
+                            trials_left -= 1
+                            continue
+                        # Give up:
+                        with open(path, 'r') as fd:
+                            first_line = next(csv.reader(fd))
+                        err_msg = f"Reading from csv file, expecting type {type_info['row_dtype']}; got '{first_line}'"
+                        raise TypeError(err_msg)
                 
         elif item_type == 'dict':
             with open(path, 'r') as fd:
                 reader = csv.DictReader(fd)
-                res_typed = next(reader)
-        
+                res = next(reader)
+                res_typed = {}
+                for key, val in res.items():
+                    res_typed[key] = self.type_converter(val, type_info['row_dtype'])
+
         return res_typed
 
     #------------------------------------
@@ -2128,10 +2157,10 @@ class TypeConverter:
         
         idxs = ['int','int64','int32','int16','str',
                 'float','float64','float32','float16',
-                'list','tuple','set','dict']
+                'complex', 'list','tuple','set','dict']
         cols = ['int','int64','int32','int16','str',
                 'float','float64','float32','float16',
-                'list','tuple','set','dict']
+                'complex', 'list','tuple','set','dict']
         num_idxs = len(idxs)
         num_cols = len(cols)
         nans     = np.array([np.nan]*(num_idxs*num_cols)).reshape((num_idxs, num_cols))
@@ -2161,12 +2190,23 @@ class TypeConverter:
         df.loc[['int','int64','int32','int16'],
                ['str']] = [str,str,str,str]
         
-        df.loc[['float','float64','float32','float16'],
-               ['str']] = [str,str,str,str]
+        df.loc[['float','float64','float32','float16', 'complex'],
+               ['str']] = [str,str,str,str,str]
         
         df.loc[['str'],
                ['int','int64','int32','int16']] = \
                   [int, np.int64, np.int32, np.int16]
+        
+        df.loc[['str'],
+               ['float','float64','float32','float16', 'complex']] = \
+                  [float, np.float64, np.float32, np.float16, complex]
+
+        df.loc[['int','int64','int32','int16'],
+               ['complex']] = [complex,complex,complex,complex]
+        
+        df.loc[['float','float64','float32','float16'],
+               ['complex']] = [complex,complex,complex,complex]
+
         
         df.loc[['tuple', 'list', 'set'],
                ['list']] = [list, list, list]
@@ -2178,6 +2218,23 @@ class TypeConverter:
                ['set']] = [set, set, set]
 
         self.conv_df = df
+        
+        # Hierarchy of types:
+        self.type_hierarchy = {'str' : 0, 
+                               'int' : 1,
+                               'np.int16' : 1,
+                               'np.int32' : 1,
+                               'np.int64' : 1,
+                               'float' : 2,
+                               'np.float16' : 2,
+                               'np.float32' : 2,
+                               'np.float64' : 2,
+                               'complex' : 3
+                               }
+        # Only valid right after a call to uptype().
+        # Indicates the highest type to which the
+        # elements givent to uptype() were promoted:
+        self.cur_max_type = 'str'
 
     #------------------------------------
     # __call__
@@ -2202,6 +2259,11 @@ class TypeConverter:
         :raises TypeError when conversion impossible
         '''
 
+        # Converting to its own type needs
+        # no work:
+        if type(item).__name__ == to_type_str:
+            return item
+        
         # Distinguish between caller wanting
         # contained elements converted, or the
         # container: 
@@ -2236,6 +2298,9 @@ class TypeConverter:
                 # Caller wants conversion of the 
                 # contained elements:
                 el_type = type(item[0][0]).__name__ if dim == 2 else type(item[0]).__name__
+        else:
+            el_type = type(item).__name__
+            dim = 0
         try:
             # Allow numpy types to be named
             # with or without leading '':
@@ -2249,7 +2314,11 @@ class TypeConverter:
         except Exception:
             raise TypeError(f"Cannot convert from {el_type} to {to_type_str}")
         
-        if dim == 1:
+        if dim == 0:
+            # Have a simple item, like a string or an int
+            # to convert:
+            res = conv_func(item)
+        elif dim == 1:
             if convert_container:
                 res = conv_func(item)
             else:
@@ -2270,7 +2339,46 @@ class TypeConverter:
             return np.array(res)
 
         return res
+
+    #------------------------------------
+    # uptype
+    #-------------------
+    
+    def uptype(self, elements):
         
+        self.cur_max_type = self.top_type(elements)
+        new_els = list(map(lambda el, self=self, max_type=self.cur_max_type : 
+                           self(el, max_type), elements))
+
+        return new_els
+
+    #------------------------------------
+    # top_type
+    #-------------------
+    
+    def top_type(self, elements):
+        '''
+        Returns the 'highest' type among the elements
+        in the type hierarchy 'str', 'int', 'float', 'complex'.
+        Any items in elements that are sublists are ignored.
+        I.e. no recursive descent for now: 
+         
+        :param elements: list of elements to check
+        :type elements: [Any]
+        :return the highest order type
+        :rtype str
+        '''
+        cur_max_code = self.type_hierarchy[self.cur_max_type]
+        for num in elements:
+            num_type = type(num).__name__
+            # Skip over non-atomic types:
+            if num_type not in list(self.type_hierarchy.keys()):
+                continue
+            if self.type_hierarchy[num_type] > cur_max_code:
+                self.cur_max_type = num_type
+                cur_max_code = self.type_hierarchy[self.cur_max_type]
+                
+        return self.cur_max_type
 
 # ------------------- Class AutoSaveThread -----------------
 

@@ -9,7 +9,7 @@ sys.path.insert(0,packet_root)
 
 import unittest
 
-from birdsong.utils.dottable_map import DottableMap 
+import dottable_map
 
 TEST_ALL = True
 #TEST_ALL = False

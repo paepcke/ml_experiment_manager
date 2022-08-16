@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 
 
-#TEST_ALL = True
-TEST_ALL = False
+TEST_ALL = True
+#TEST_ALL = False
 
 '''
 TODO:
@@ -66,6 +66,10 @@ class ExperimentManagerTest(unittest.TestCase):
         except FileNotFoundError:
             pass
 
+        # In case tear_down() did not run:
+        if os.path.exists(self.exp_root):
+            self.tearDown()
+        
         os.makedirs(self.prefab_exp_root)
         
         # Create a little torch model and save it:
@@ -163,47 +167,42 @@ class ExperimentManagerTest(unittest.TestCase):
         self.exp = exp
 
         tst_dict = {'foo' : 10, 'bar' : 20}
-        csv_file_path = exp.save('first_dict', tst_dict)
+        exp.save('first_dict', tst_dict)
+        read_dict = exp.read('first_dict', Datatype.tabular)
         
-        with open(csv_file_path, 'r') as fd:
-            reader = csv.DictReader(fd)
-            self.assertEqual(reader.fieldnames, ['foo', 'bar'])
-            row_dict = next(reader)
-            self.assertEqual(list(row_dict.values()), ['10','20'])
-            self.assertEqual(list(row_dict.keys()), ['foo', 'bar'])
+        self.assertDictEqual(read_dict, tst_dict)
+        
+        # Add items to dict and save again:
+        tst_dict['fum'] = 30
+        exp.save('first_dict', tst_dict)
 
-        writers_dict = exp.csv_writers
-        self.assertEqual(len(writers_dict), 1)
+        read_dict = exp.read('first_dict', Datatype.tabular)
+        self.assertDictEqual(read_dict, tst_dict)
         
-        wd_keys   = list(writers_dict.keys())
-        first_key = wd_keys[0]
-        self.assertEqual(first_key, Path(csv_file_path).stem)
-        self.assertEqual(type(writers_dict[first_key]), csv.DictWriter)
+        # Add some float items
+        tst_dict['myFloat'] = 40.5
+        exp.save('first_dict', tst_dict)
+        read_dict = exp.read('first_dict', Datatype.tabular)
+        # We expect that all values are up-typed 
+        # to float:
+        expected = {'foo': 10.0, 'bar': 20.0, 'fum': 30.0, 'myFloat': 40.5}
+        self.assertDictEqual(read_dict, expected)
+        
+        # Try a complex number:
+        tst_dict['myComplex'] = (50+1j)
+        exp.save('first_dict', tst_dict)
+        read_dict = exp.read('first_dict', Datatype.tabular)
+        # We expect that all values are up-typed 
+        # to float:
+        expected = {'foo': (10+0j), 
+                    'bar': (20+0j), 
+                    'fum': (30+0j), 
+                    'myFloat': (40.5+0j),
+                    'myComplex' : (50+1j)
+                    }
+        self.assertDictEqual(read_dict, expected)
+        
 
-        # Add second row to the same csv:
-        row2_dict = {'foo' : 100, 'bar' : 200}
-        exp.save('first_dict', row2_dict)
-        
-        # Second row should be [100, 200]:
-        with open(csv_file_path, 'r') as fd:
-            reader = csv.DictReader(fd)
-            row_dict0 = next(reader)
-            self.assertEqual(list(row_dict0.values()), ['10','20'])
-            row_dict1 = next(reader)
-            self.assertEqual(list(row_dict1.values()), ['100','200'])
-
-        # Should be able to just write a row, not a dict:
-        exp.save('first_dict', [1000,2000])
-        # Look at 3rd row should be ['1000', '2000']:
-        with open(csv_file_path, 'r') as fd:
-            reader = csv.DictReader(fd)
-            row_dict0 = next(reader)
-            self.assertEqual(list(row_dict0.values()), ['10','20'])
-            row_dict1 = next(reader)
-            self.assertEqual(list(row_dict1.values()), ['100','200'])
-            row_dict2 = next(reader)
-            self.assertEqual(list(row_dict2.values()), ['1000','2000'])
-        
     #------------------------------------
     # test_saving_csv
     #-------------------
@@ -264,11 +263,11 @@ class ExperimentManagerTest(unittest.TestCase):
             self.assertDictEqual(second_row_dict, expected)
 
     #------------------------------------
-    # test_adding_to_csv_index_ignored
+    # test_save_list
     #-------------------
     
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
-    def test_adding_to_csv_index_ignored(self):
+    def test_save_list(self):
         
         exp = ExperimentManager(self.exp_root)
         self.exp = exp
@@ -291,47 +290,11 @@ class ExperimentManagerTest(unittest.TestCase):
         re_read  = self.exp.read('my_list', Datatype.tabular)
         self.assertListEqual(re_read, tlist)
 
-        df = pd.DataFrame([[1,2,3],[10,20,30]], index=[(3, 0.5, 0.01), (4, 0.6, 0.08)], columns=[100,200,300])
-        exp.save('df', df)
         exp.close()
-
-    #------------------------------------
-    # test_adding_to_csv_index_included
-    #-------------------
-    
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
-    def test_adding_to_csv_index_included(self):
-        
-        exp = ExperimentManager(self.exp_root)
-        self.exp = exp
-        
-        df = pd.DataFrame([[1,2,3],[10,20,30]], index=[(3, 0.5, 0.01), (4, 0.6, 0.08)], columns=[100,200,300])
-        exp.save('df', df, index_col='the_idx')
-        exp.close()
-        
-        row_dicts = self.read_csv_file('df')
-        expected  = [{'the_idx': '(3, 0.5, 0.01)', '100': '1', '200': '2', '300': '3'},
-                     {'the_idx': '(4, 0.6, 0.08)', '100': '10', '200': '20', '300': '30'}]
-        for i, one_dict in enumerate(row_dicts):
-            self.assertDictEqual(one_dict, expected[i])
-
-        exp = ExperimentManager(self.exp_root)
-        exp.save('df', df)
-        row_dicts = self.read_csv_file('df')
-        expected  = [{'the_idx': '(3, 0.5, 0.01)', '100': '1', '200': '2', '300': '3'},
-                     {'the_idx': '(4, 0.6, 0.08)', '100': '10', '200': '20', '300': '30'},
-                     {'the_idx': '(3, 0.5, 0.01)', '100': '1', '200': '2', '300': '3'},
-                     {'the_idx': '(4, 0.6, 0.08)', '100': '10', '200': '20', '300': '30'}
-                     ]
-
-        for i, one_dict in enumerate(row_dicts):
-            self.assertDictEqual(one_dict, expected[i])
 
     #------------------------------------
     # test_type_converter
     #-------------------
-    
-    #******* Run all tests, and keep debuggin
     
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_type_converter(self):
@@ -377,6 +340,32 @@ class ExperimentManagerTest(unittest.TestCase):
         s_floats = converter(s, 'float')
         expected = set([1.0, 2.0, 3.0])
         self.assertSetEqual(s_floats, expected)
+
+    #------------------------------------
+    # test_up_typing
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_up_typing(self):
+        
+        converter = TypeConverter()
+        elements = [10, 20, 13.5]
+        up_typed = converter.uptype(elements)
+        expected = [10.0, 20.0, 13.5]
+        
+        self.assertListEqual(up_typed, expected)
+
+        elements = ['10', '20', 13.5]
+        up_typed = converter.uptype(elements)
+        expected = [10.0, 20.0, 13.5]
+        
+        self.assertListEqual(up_typed, expected)
+
+        elements = ['10', 20.0, complex(30,5)]
+        up_typed = converter.uptype(elements)
+        expected = [(10+0j), (20+0j), (30+5j)]
+        
+        self.assertListEqual(up_typed, expected)
 
     #------------------------------------
     # test_saving_hparams
@@ -466,40 +455,86 @@ class ExperimentManagerTest(unittest.TestCase):
     @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_mixed_csv_adding(self):
 
+        # Starting a list with just a header. Then
+        # adding to the list with sublists. Finally,
+        # adding an np array, which changes the retrieved
+        # value from 'list' to 'np.ndarray'.
+
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+
+        self.exp.save('my_list', header=['Foo', 'Bar', 'Fum'])
+
+        tlist = [[1,2,3], [4,5,6]]
+        self.exp.save('my_list', tlist)
+        exp.close()
+
         exp = ExperimentManager(self.exp_root)
         # For cleanup in tearDown():
         self.exp = exp
         
-        # Start with saving a dict:
-        my_dict = {'foo' : 1, 'bar' : 2}
-        exp.save('my_results', my_dict)
+        tlist1 = [7,8,9]
+        self.exp.save('my_list', tlist1)
         
-        # Add a data frame to the same csv:
-        df = pd.DataFrame([[3,4],[5,6],[7,8]], columns=['foo', 'bar'])
-        csv_path = exp.save('my_results', df)
-        
-        rows = self.read_ints_from_csv(csv_path)
-
-        expected = [[1,2],
-                    [3,4],
-                    [5,6],
-                    [7,8]
+        my_list = self.exp.read('my_list', Datatype.tabular)
+        expected = [[1,2,3],
+                    [4,5,6],
+                    [7,8,9]
                     ]
-        self.assertListEqual(rows, expected)
-        
-        # Add a row in the form of a pd Series:
-        ser = pd.Series([9,10], index=['foo', 'bar'])
-        exp.save('my_results', ser)
-        expected.append([9,10])
-        rows = self.read_ints_from_csv(csv_path)
-        self.assertListEqual(rows, expected)
+        self.assertListEqual(my_list, expected)
         
         # Add an np array:
-        nparr = np.array([[11,12],[13,14]])
-        exp.save('my_results', nparr)
-        expected.extend([[11,12],[13,14]])
-        rows = self.read_ints_from_csv(csv_path)
-        self.assertListEqual(rows, expected)
+        nparr = np.array([[10,11,12],[13,14,15]])
+        exp.save('my_list', nparr)
+        expected = np.array([[1,2,3],
+                             [4,5,6],
+                             [7,8,9],
+                             [10,11,12],
+                             [13,14,15]
+                             ])
+        res_nparr = exp.read('my_list', Datatype.tabular)
+        self.assertTrue(np.array_equal(res_nparr, expected))
+
+    #------------------------------------
+    # test_too_many_bad_nparray_headers
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_too_many_bad_nparray_headers(self):
+
+        # Store 4 string headers above integer csv rows. Add 
+        # an int np array, and read it back. Should
+        # fail with a TypeError.
+        
+        exp = ExperimentManager(self.exp_root)
+        # For cleanup in tearDown():
+        self.exp = exp
+
+        # Total of three string typed header lines:
+        self.exp.save('my_list', header=['Foo', 'Bar', 'Fum'])
+        self.exp.save('my_list', [['Red', 'Green', 'Blue'], 
+                                  ['Pan', 'Top', 'Bucket'],
+                                  ['Cup', 'Knife', 'Fork']
+                                  ])
+
+        # Two integer rows
+        tlist = [[1,2,3], [4,5,6]]
+        self.exp.save('my_list', tlist)
+
+        # Add two np array lines, turning overall
+        # container to an np array with integer-typed
+        # elements:
+        nparr = np.array([[10,11,12],[13,14,15]])
+        exp.save('my_list', nparr)
+        
+        # Read the np array back: should fail b/c too
+        # many non-integer header lines:
+        
+        # Read the array back. 
+        self.assertRaises(TypeError, exp.read, 'my_list', Datatype.tabular)
+
+        exp.close()
 
     #------------------------------------
     # test_saving_mem_items
