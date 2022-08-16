@@ -9,7 +9,7 @@ sys.path.insert(0,packet_root)
 
 import unittest
 
-import dottable_map
+from experiment_manager.utils.dottable_map import DottableMap
 
 TEST_ALL = True
 #TEST_ALL = False

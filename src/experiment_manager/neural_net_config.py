@@ -9,8 +9,8 @@ import io
 import json
 import os
 
-from experiment_manager.dottable_config import DottableConfigParser
-from experiment_manager.dottable_map import DottableMap
+from experiment_manager.utils.dottable_config import DottableConfigParser
+from experiment_manager.utils.dottable_map import DottableMap
 
 # ------------ Specialty Exceptions --------
 

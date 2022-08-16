@@ -6,7 +6,7 @@ Created on Dec 19, 2020
 from configparser import ConfigParser
 import os, sys
 
-from experiment_manager.dottable_map import DottableMap
+from experiment_manager.utils.dottable_map import DottableMap
 
 packet_root = os.path.abspath(__file__.split('/')[0])
 sys.path.insert(0,packet_root)

@@ -9,7 +9,7 @@ sys.path.insert(0,packet_root)
 
 import unittest
 
-from experiment_manager.dottable_config import DottableConfigParser
+from experiment_manager.utils.dottable_config import DottableConfigParser
 
 TEST_ALL = True
 #TEST_ALL = False
